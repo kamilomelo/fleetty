@@ -122,8 +122,12 @@ impl Aur {
 
     fn stage(self) -> &'static str {
         match self {
-            Self::Paru => "echo '[fleetty] Starting AUR update: paru -Sua'; paru -Sua",
-            Self::Yay => "echo '[fleetty] Starting AUR update: yay -Sua'; yay -Sua",
+            Self::Paru => {
+                "sudo -k || exit $?; echo '[fleetty] Starting AUR update: paru -Sua'; paru -Sua"
+            }
+            Self::Yay => {
+                "sudo -k || exit $?; echo '[fleetty] Starting AUR update: yay -Sua'; yay -Sua"
+            }
             Self::None => "echo '[fleetty] AUR NOT checked: no paru or yay detected'; true",
         }
     }
@@ -1371,8 +1375,6 @@ fn update_script(aur: Aur) -> String {
          else stty -echo; \
           sudo -S -p \"$(printf '\\036FLEETTY_NEED\\037')\" -v; result=$?; stty echo; [ \"$result\" -eq 0 ] || exit \"$result\"; \
           printf '\\036FLEETTY_READY\\037'; fi; \
-         (while sleep 30; do sudo -n -v >/dev/null 2>&1; done) </dev/null >/dev/null 2>&1 & keepalive=$!; \
-          trap 'kill \"$keepalive\" 2>/dev/null' EXIT; \
           before=$(pacman -Q) || exit $?; \
            before=$(printf '%s\\n' \"$before\" | LC_ALL=C sort) || exit $?; \
            echo '[fleetty] Starting official package update: sudo pacman -Syu'; \
@@ -1393,8 +1395,9 @@ fn interactive_update(
     auth: &Auth,
     sudo_auth: &Auth,
 ) -> Result<UpdateAttempt, String> {
-    // The ready/need markers let us send the password only if sudo requests it.
-    // Everything after that stays in this SSH terminal, including AUR review and reboot.
+    // The ready/need markers let us send the password only during initial sudo
+    // authentication. Later output (including AUR builds) cannot request it.
+    // Interactive AUR prompts and reboot remain in this SSH terminal.
     let remote = update_script(aur);
     let _raw = auth::raw_mode()?;
     let mut child = ssh(host, &remote, true, auth)
@@ -2042,7 +2045,7 @@ mod tests {
                 ),
                 (
                     "sudo",
-                    "#!/bin/sh\ncase \"$1\" in\n-n) exit 0;;\nreboot) touch \"$FLEETTY_TEST_REBOOT\";;\n*) exec \"$@\";;\nesac\n",
+                    "#!/bin/sh\ncase \"$1\" in\n-n|-k) exit 0;;\nreboot) touch \"$FLEETTY_TEST_REBOOT\";;\n*) exec \"$@\";;\nesac\n",
                 ),
             ] {
                 let path = dir.path().join(name);
@@ -2092,7 +2095,7 @@ mod tests {
             ),
             (
                 "sudo",
-                "#!/bin/sh\ncase \"$1\" in\n-n) exit 0;;\nreboot) touch \"$FLEETTY_TEST_REBOOT\";;\n*) exec \"$@\";;\nesac\n",
+                "#!/bin/sh\ncase \"$1\" in\n-n|-k) exit 0;;\nreboot) touch \"$FLEETTY_TEST_REBOOT\";;\n*) exec \"$@\";;\nesac\n",
             ),
             (
                 "paru",
@@ -2116,5 +2119,125 @@ mod tests {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("Starting AUR update: paru -Sua"));
         assert!(!dir.path().join("reboot").exists());
+    }
+
+    #[test]
+    fn aur_stage_starts_without_fleetty_sudo_timestamp() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+        for (name, script) in [
+            (
+                "pacman",
+                r#"#!/bin/sh
+[ "$1" = -Q ] && { echo 'pkg 1.0'; exit 0; }
+[ "$1" = -Syu ] && exit 0
+exit 1
+"#,
+            ),
+            (
+                "sudo",
+                r#"#!/bin/sh
+case "$1" in
+  -n) [ ! -f "$FLEETTY_TEST_SUDO_INVALIDATED" ] ;;
+  -k) touch "$FLEETTY_TEST_SUDO_INVALIDATED" ;;
+  *) exec "$@" ;;
+esac
+"#,
+            ),
+            (
+                "paru",
+                r#"#!/bin/sh
+[ "$1" = -Sua ] || exit 2
+if sudo -n -v; then echo 'AUR inherited Fleetty sudo timestamp' >&2; exit 3; fi
+echo 'AUR ran without cached sudo'
+"#,
+            ),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let result = Command::new("sh")
+            .arg("-c")
+            .arg(update_script(Aur::Paru))
+            .env(
+                "PATH",
+                format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),
+            )
+            .env(
+                "FLEETTY_TEST_SUDO_INVALIDATED",
+                dir.path().join("invalidated"),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("AUR ran without cached sudo"));
+        assert!(dir.path().join("invalidated").exists());
+    }
+
+    #[test]
+    fn successful_aur_update_still_reboots_after_package_changes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+        for (name, script) in [
+            (
+                "pacman",
+                r#"#!/bin/sh
+case "$1" in
+  -Q) if [ -f "$FLEETTY_TEST_UPDATED" ]; then echo 'pkg 2.0'; else echo 'pkg 1.0'; fi ;;
+  -Syu) exit 0 ;;
+  *) exit 1 ;;
+esac
+"#,
+            ),
+            (
+                "sudo",
+                r#"#!/bin/sh
+case "$1" in
+  -n|-k) exit 0 ;;
+  reboot) touch "$FLEETTY_TEST_REBOOT" ;;
+  *) exec "$@" ;;
+esac
+"#,
+            ),
+            (
+                "paru",
+                r#"#!/bin/sh
+[ "$1" = -Sua ] || exit 1
+touch "$FLEETTY_TEST_UPDATED"
+"#,
+            ),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let result = Command::new("sh")
+            .arg("-c")
+            .arg(update_script(Aur::Paru))
+            .env(
+                "PATH",
+                format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),
+            )
+            .env("FLEETTY_TEST_UPDATED", dir.path().join("updated"))
+            .env("FLEETTY_TEST_REBOOT", dir.path().join("reboot"))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            result
+                .stdout
+                .windows(UPDATED.len())
+                .any(|bytes| bytes == UPDATED)
+        );
+        assert!(dir.path().join("reboot").exists());
     }
 }
