@@ -1,0 +1,11 @@
+[package]
+name = "fleetty"
+version = "0.1.0"
+edition = "2024"
+description = "Interactive SSH maintenance for a small fleet"
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+toml = "0.8"

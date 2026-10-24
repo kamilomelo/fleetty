@@ -1,0 +1,14 @@
+# Copy to inventory.toml. Quote each IP address (TOML treats dots as nesting).
+# Each value is one SSH username, or an array when an IP has multiple accounts.
+# Never store passwords here; Fleetty prompts for them during a run.
+[pcs]
+"192.0.2.10" = "kamilo"
+"192.0.2.11" = "kamilo"
+
+[servers]
+"203.0.113.10" = "admin"
+# "203.0.113.11" = ["admin", "deploy"]
+
+# Optional priority group: run these first and confirm each reboot before moving on.
+# [_mgt]
+# "192.0.2.1" = "admin"
