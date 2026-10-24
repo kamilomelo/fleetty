@@ -3,6 +3,7 @@ name = "fleetty"
 version = "0.1.0"
 edition = "2024"
 description = "Interactive SSH maintenance for a small fleet"
+license = "MIT"
 
 [dependencies]
 libc = "0.2"

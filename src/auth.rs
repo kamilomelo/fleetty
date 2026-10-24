@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::{File, Permissions},
-    io::{self, BufRead, BufReader, Write},
+    io::{self, Read, Write},
     os::{
         fd::AsRawFd,
         unix::{
@@ -20,6 +20,7 @@ use std::{
 };
 
 struct Secret(Vec<u8>);
+const MAX_PASSWORD_BYTES: usize = 1024;
 
 impl Drop for Secret {
     fn drop(&mut self) {
@@ -87,32 +88,25 @@ pub struct Auth {
 
 impl Auth {
     pub fn prompt() -> Result<Self, String> {
-        Self::prompt_with("Shared SSH and sudo password (held only for this run): ")
+        let mut tty = open_tty()?;
+        loop {
+            let first = read_password(
+                &mut tty,
+                "Shared SSH and sudo password (held only for this run): ",
+            )?;
+            let repeated = read_password(&mut tty, "Repeat shared password: ")?;
+            if let Some(secret) = confirmed_password(first, repeated) {
+                return Self::from_secret(secret);
+            }
+            writeln!(tty, "Passwords do not match; please try again.")
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     pub fn prompt_with(label: &str) -> Result<Self, String> {
-        let mut tty = File::options()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .map_err(|e| format!("a local terminal is required for the password: {e}"))?;
-        write!(tty, "{label}").map_err(|e| e.to_string())?;
-        tty.flush().map_err(|e| e.to_string())?;
-        let guard = EchoGuard::disable(tty.as_raw_fd())?;
-        let mut secret = Vec::new();
-        BufReader::new(&tty)
-            .read_until(b'\n', &mut secret)
-            .map_err(|e| e.to_string())?;
-        drop(guard);
-        writeln!(tty).map_err(|e| e.to_string())?;
-        while secret.last().is_some_and(|c| *c == b'\n' || *c == b'\r') {
-            secret.pop();
-        }
-        if secret.is_empty() || secret.iter().any(u8::is_ascii_control) {
-            secret.fill(0);
-            return Err("password must be nonempty and on one line".into());
-        }
-        Self::from_secret(secret)
+        let mut tty = open_tty()?;
+        let mut secret = read_password(&mut tty, label)?;
+        Self::from_secret(std::mem::take(&mut secret.0))
     }
 
     fn from_secret(secret: Vec<u8>) -> Result<Self, String> {
@@ -173,6 +167,49 @@ impl Auth {
     }
 }
 
+fn open_tty() -> Result<File, String> {
+    File::options()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|e| format!("a local terminal is required for the password: {e}"))
+}
+
+fn read_password(tty: &mut File, label: &str) -> Result<Secret, String> {
+    write!(tty, "{label}").map_err(|e| e.to_string())?;
+    tty.flush().map_err(|e| e.to_string())?;
+    let guard = EchoGuard::disable(tty.as_raw_fd())?;
+    let mut secret = Secret(Vec::new());
+    let result = (|| -> Result<(), String> {
+        loop {
+            let mut byte = [0];
+            match tty.read(&mut byte).map_err(|e| e.to_string())? {
+                0 => return Err("password input closed".into()),
+                _ if byte[0] == b'\n' => break,
+                _ if secret.0.len() >= MAX_PASSWORD_BYTES => {
+                    return Err(format!("password exceeds {MAX_PASSWORD_BYTES} bytes"));
+                }
+                _ => secret.0.push(byte[0]),
+            }
+        }
+        if secret.0.last() == Some(&b'\r') {
+            secret.0.pop();
+        }
+        if secret.0.is_empty() || secret.0.iter().any(u8::is_ascii_control) {
+            return Err("password must be nonempty and on one line".into());
+        }
+        Ok(())
+    })();
+    drop(guard);
+    writeln!(tty).map_err(|e| e.to_string())?;
+    result?;
+    Ok(secret)
+}
+
+fn confirmed_password(mut first: Secret, repeated: Secret) -> Option<Vec<u8>> {
+    (first.0 == repeated.0).then(|| std::mem::take(&mut first.0))
+}
+
 impl Drop for Auth {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -211,5 +248,14 @@ mod tests {
             0o700
         );
         assert!(auth.path.exists());
+    }
+
+    #[test]
+    fn shared_password_requires_matching_second_entry() {
+        assert!(confirmed_password(Secret(b"first".to_vec()), Secret(b"typo".to_vec())).is_none());
+        assert_eq!(
+            confirmed_password(Secret(b"secret".to_vec()), Secret(b"secret".to_vec())),
+            Some(b"secret".to_vec())
+        );
     }
 }

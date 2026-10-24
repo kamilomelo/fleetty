@@ -53,8 +53,10 @@ agent is available, first run `eval "$(ssh-agent -s)"`. Fleetty cannot answer
 public-key-only server.
 
 Fleetty always asks for a shared SSH/sudo password at the start of a run, even
-when SSH uses keys. If SSH rejects it and the server permits password login,
-Fleetty offers one alternate password for that account. Before an update or
+when SSH uses keys. You enter it twice; if the entries differ, Fleetty asks
+again before connecting to any hosts. This catches mistypes, not a password
+entered incorrectly both times. If SSH rejects it and the server permits
+password login, Fleetty offers one alternate password for that account. Before an update or
 shutdown, it checks sudo: it first tries that account's SSH credential and
 offers one separate sudo password if rejected. Passwordless sudo also works.
 The check resets sudo's cached authentication, so sudo may ask again during a
@@ -101,14 +103,19 @@ compromised.
 
 ## Results and safety
 
+- Noninteractive SSH checks and shutdown requests have a 30-second deadline
+  and a 16 KiB output limit per stream. Interactive updates and custom commands
+  have no automatic deadline, since AUR builds and user commands may take a
+  long time; they still require supervision.
 - Connection failures are tried up to three times. Authentication and host-key
   failures are not retried. An **unreachable** host is shown in red with a
   yellow warning, but does not by itself cause a nonzero exit status: it may
   have been intentionally shut down.
-- **Skipped** hosts also produce warnings, not an error exit—even if you chose
-  to leave a host on after an update failure. **Failed** operations and an
-  **unknown shutdown outcome** cause an error exit. Review per-host results;
-  do not rely only on the process exit status. Results are not persisted.
+- **Skipped** hosts (such as a declined pacman-only update) produce warnings.
+  Choosing to leave a machine on after an update failure now flags it as
+  **failed** while continuing to other hosts. Failed operations and unknown
+  shutdown outcomes cause an error exit. Review per-host results; results are
+  not persisted.
 - The preflight is not a health check. Your local clock must be correct; fix
   mirrors, keyrings, or broken AUR builds manually if needed. Do not sync
   pacman databases without completing a full system upgrade.

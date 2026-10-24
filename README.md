@@ -46,8 +46,8 @@ marks any group as priority. See the [inventory and run guide](docs/usage.md).
 - **Shutdown:** Confirm twice, then send concurrent shutdown requests.
 - **Run command:** Execute your command as the SSH user on selected accounts.
 
-Fleetty asks for a shared password at the start of each run. SSH and sudo can
-prompt for account-specific alternatives if that password is rejected. For
+Fleetty asks you to enter and confirm a shared password before contacting hosts.
+SSH and sudo can prompt for account-specific alternatives if it is rejected. For
 encrypted SSH keys, unlock them with `ssh-add` before starting Fleetty.
 See [usage, SSH setup, outcomes, and safety notes](docs/usage.md).
 

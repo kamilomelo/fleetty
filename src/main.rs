@@ -10,7 +10,7 @@ use std::{
     os::fd::AsRawFd,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Output, Stdio},
     sync::{Arc, mpsc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -18,6 +18,8 @@ use std::{
 
 const CONNECT_TIMEOUT: &str = "6";
 const CONNECTION_ATTEMPTS: usize = 3;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const PROBE_OUTPUT_LIMIT: usize = 16 * 1024;
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_CLOCK_SKEW: u64 = 120;
 const NEED: &[u8] = b"\x1eFLEETTY_NEED\x1f";
@@ -487,8 +489,9 @@ fn run_inventory(path: &Path) -> Result<(), String> {
                 let (name, status) = handle.join().map_err(|_| "shutdown worker panicked")?;
                 let result = match status {
                     Ok(s) if s.success() => ResultKind::Requested,
-                    // Connection loss could mean shutdown started OR SSH failed.
+                    // Connection loss or a stalled SSH reply could mean shutdown started OR failed.
                     Ok(s) if s.code() == Some(255) => ResultKind::Unknown,
+                    Err(err) if err.kind() == io::ErrorKind::TimedOut => ResultKind::Unknown,
                     _ => ResultKind::Failed,
                 };
                 results.push((name, result));
@@ -940,15 +943,154 @@ fn ssh(host: &Host, remote: &str, interactive: bool, auth: &Auth) -> Command {
     cmd
 }
 
+fn set_nonblocking(fd: i32) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn read_bounded(pipe: &mut impl Read, buffer: &mut Vec<u8>, limit: usize) -> io::Result<bool> {
+    let mut chunk = [0u8; 2048];
+    match pipe.read(&mut chunk) {
+        Ok(0) => Ok(false),
+        Ok(n) if n > limit.saturating_sub(buffer.len()) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "remote output exceeded the probe limit",
+        )),
+        Ok(n) => {
+            buffer.extend_from_slice(&chunk[..n]);
+            Ok(true)
+        }
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+// Read short, noninteractive SSH commands without trusting the remote process
+// to finish or produce a finite amount of output. Interactive updates and
+// user-entered commands deliberately do not use this watchdog.
+fn bounded_output(mut command: Command, input: Option<&[u8]>) -> io::Result<Output> {
+    bounded_output_with(&mut command, input, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT)
+}
+
+fn bounded_output_with(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    limit: usize,
+) -> io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if input.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    let mut child = command.spawn()?;
+    let start = Instant::now();
+    let result = (|| -> io::Result<Output> {
+        let mut stdin = child.stdin.take();
+        if let Some(ref pipe) = stdin {
+            set_nonblocking(pipe.as_raw_fd())?;
+        }
+        let mut sent = 0;
+        let mut stdout = child.stdout.take().expect("piped SSH stdout");
+        let mut stderr = child.stderr.take().expect("piped SSH stderr");
+        set_nonblocking(stdout.as_raw_fd())?;
+        set_nonblocking(stderr.as_raw_fd())?;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let (mut out_open, mut err_open) = (true, true);
+        loop {
+            if start.elapsed() >= timeout {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "remote SSH command timed out",
+                ));
+            }
+            if let (Some(password), Some(pipe)) = (input, stdin.as_mut()) {
+                let part = if sent < password.len() {
+                    &password[sent..]
+                } else {
+                    b"\n".as_slice()
+                };
+                match pipe.write(part) {
+                    Ok(n) => sent += n,
+                    // A remote failure may close stdin before reading it. Keep
+                    // the process diagnostic rather than reporting BrokenPipe.
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => stdin = None,
+                    Err(err)
+                        if matches!(
+                            err.kind(),
+                            io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                        ) => {}
+                    Err(err) => return Err(err),
+                }
+                if sent > password.len() {
+                    stdin = None;
+                }
+            }
+            if out_open {
+                out_open = read_bounded(&mut stdout, &mut out, limit)?;
+            }
+            if err_open {
+                err_open = read_bounded(&mut stderr, &mut err, limit)?;
+            }
+            if let Some(status) = child.try_wait()?
+                && !out_open
+                && !err_open
+            {
+                return Ok(Output {
+                    status,
+                    stdout: out,
+                    stderr: err,
+                });
+            }
+            let mut fds = [
+                libc::pollfd {
+                    fd: stdout.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: stderr.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            if !out_open {
+                fds[0].fd = -1;
+            }
+            if !err_open {
+                fds[1].fd = -1;
+            }
+            let remaining = timeout.saturating_sub(start.elapsed());
+            let wait = remaining.min(Duration::from_millis(50)).as_millis() as i32;
+            let polled = unsafe { libc::poll(fds.as_mut_ptr(), 2, wait) };
+            if polled < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
+}
+
 fn shutdown(host: &Host, auth: &Auth, sudo_auth: &Auth) -> io::Result<ExitStatus> {
-    let mut child = ssh(host, "sudo -S -p '' shutdown -h now", false, auth)
-        .stdin(Stdio::piped())
-        .spawn()?;
-    let mut input = child.stdin.take().expect("piped SSH input");
-    input.write_all(sudo_auth.password())?;
-    input.write_all(b"\n")?;
-    drop(input);
-    child.wait()
+    bounded_output(
+        ssh(host, "sudo -S -p '' shutdown -h now", false, auth),
+        Some(sudo_auth.password()),
+    )
+    .map(|output| output.status)
 }
 
 fn classify_connection(code: Option<i32>, stderr: &str) -> (ResultKind, bool) {
@@ -976,13 +1118,26 @@ fn authentication_failed(code: Option<i32>, stderr: &str) -> bool {
 fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
     for attempt in 1..=CONNECTION_ATTEMPTS {
         // `hostname` is an optional package on some Arch installations.
-        let output = ssh(host, "cat /proc/sys/kernel/hostname", false, auth)
-            .output()
-            .map_err(|e| ConnectError {
-                kind: ResultKind::Failed,
-                message: format!("could not start SSH: {e}"),
-                authentication_failed: false,
-            })?;
+        let output = match bounded_output(
+            ssh(host, "cat /proc/sys/kernel/hostname", false, auth),
+            None,
+        ) {
+            Ok(output) => output,
+            Err(err) if err.kind() == io::ErrorKind::TimedOut && attempt < CONNECTION_ATTEMPTS => {
+                continue;
+            }
+            Err(err) => {
+                return Err(ConnectError {
+                    kind: if err.kind() == io::ErrorKind::TimedOut {
+                        ResultKind::Unreachable
+                    } else {
+                        ResultKind::Failed
+                    },
+                    message: format!("SSH check failed: {err}"),
+                    authentication_failed: false,
+                });
+            }
+        };
         if output.status.success() {
             let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if name.is_empty() || name.contains(|c: char| c.is_control() || c.is_whitespace()) {
@@ -1084,7 +1239,7 @@ enum SudoCheck {
 fn check_sudo(host: &Host, ssh_auth: &Auth, sudo_auth: &Auth) -> SudoCheck {
     // Invalidate any cached sudo timestamp so a key-based SSH login cannot mask
     // an incorrect sudo password. The first check also supports NOPASSWD.
-    let passwordless = ssh(host, "LC_ALL=C sudo -k -n -v", false, ssh_auth).output();
+    let passwordless = bounded_output(ssh(host, "LC_ALL=C sudo -k -n -v", false, ssh_auth), None);
     match passwordless {
         Ok(output) if output.status.success() => return SudoCheck::Accepted,
         Ok(output) if output.status.code() == Some(255) => {
@@ -1093,21 +1248,10 @@ fn check_sudo(host: &Host, ssh_auth: &Auth, sudo_auth: &Auth) -> SudoCheck {
         Err(err) => return SudoCheck::Failed(format!("could not start sudo check: {err}")),
         _ => {}
     }
-    let mut child = match ssh(host, "LC_ALL=C sudo -k -S -p '' -v", false, ssh_auth)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(err) => return SudoCheck::Failed(format!("could not start sudo check: {err}")),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        // If sudo exits early, wait for its diagnostic instead of losing it to BrokenPipe.
-        let _ = stdin.write_all(sudo_auth.password());
-        let _ = stdin.write_all(b"\n");
-    }
-    match child.wait_with_output() {
+    match bounded_output(
+        ssh(host, "LC_ALL=C sudo -k -S -p '' -v", false, ssh_auth),
+        Some(sudo_auth.password()),
+    ) {
         Ok(output) if output.status.success() => SudoCheck::Accepted,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1182,9 +1326,11 @@ fn prepare_sudo_with(
 }
 
 fn boot_id(host: &Host, auth: &Auth) -> Result<String, String> {
-    let output = ssh(host, "cat /proc/sys/kernel/random/boot_id", false, auth)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = bounded_output(
+        ssh(host, "cat /proc/sys/kernel/random/boot_id", false, auth),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
     let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !output.status.success() || id.is_empty() {
         return Err("could not read boot ID".into());
@@ -1193,8 +1339,7 @@ fn boot_id(host: &Host, auth: &Auth) -> Result<String, String> {
 }
 
 fn detect_aur(host: &Host, auth: &Auth) -> Result<Aur, String> {
-    let output = ssh(host, "if command -v paru >/dev/null 2>&1; then echo paru; elif command -v yay >/dev/null 2>&1; then echo yay; else echo none; fi", false, auth)
-        .output()
+    let output = bounded_output(ssh(host, "if command -v paru >/dev/null 2>&1; then echo paru; elif command -v yay >/dev/null 2>&1; then echo yay; else echo none; fi", false, auth), None)
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(format!("{}: could not detect AUR helper", host.target()));
@@ -1208,18 +1353,19 @@ fn detect_aur(host: &Host, auth: &Auth) -> Result<Aur, String> {
 }
 
 fn preflight(host: &Host, auth: &Auth) -> Result<(), String> {
-    let lock = ssh(host, "test ! -e /var/lib/pacman/db.lck", false, auth)
-        .status()
-        .map_err(|e| format!("pacman lock check: {e}"))?;
-    if !lock.success() {
+    let lock = bounded_output(
+        ssh(host, "test ! -e /var/lib/pacman/db.lck", false, auth),
+        None,
+    )
+    .map_err(|e| format!("pacman lock check: {e}"))?;
+    if !lock.status.success() {
         return Err("pacman database is locked or the lock check failed".into());
     }
     // `timedatectl` can report "no" for hosts using a different time service.
     // Compare the actual remote clock against this computer instead, accounting
     // for the time spent establishing the SSH connection.
     let before = unix_time()?;
-    let clock = ssh(host, "date +%s", false, auth)
-        .output()
+    let clock = bounded_output(ssh(host, "date +%s", false, auth), None)
         .map_err(|e| format!("remote clock check: {e}"))?;
     let after = unix_time()?;
     if !clock.status.success() {
@@ -1592,7 +1738,7 @@ fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<UpdateOutcome, S
                 "Retry update",
                 "Open interactive SSH shell to repair, then retry",
                 "Skip and flag",
-                "Leave machine on and continue",
+                "Leave machine on and continue (flag update as failed)",
                 "Shut down this host and continue",
             ],
         )? {
@@ -1602,7 +1748,7 @@ fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<UpdateOutcome, S
                 continue;
             }
             3 => return Ok(UpdateOutcome::Complete(ResultKind::Failed)),
-            4 => return Ok(UpdateOutcome::Complete(ResultKind::Skipped)),
+            4 => return Ok(UpdateOutcome::Complete(ResultKind::Failed)),
             5 => {
                 if confirm(&format!(
                     "Shut down {} despite failed update",
@@ -1939,6 +2085,8 @@ mod tests {
         assert!(report_attention(&offline).is_ok());
         let failed = vec![("update failed".into(), ResultKind::Failed)];
         assert!(report_attention(&failed).is_err());
+        let skipped = vec![("pacman-only update declined".into(), ResultKind::Skipped)];
+        assert!(report_attention(&skipped).is_ok());
         let unknown = vec![("shutdown outcome unknown".into(), ResultKind::Unknown)];
         assert!(report_attention(&unknown).is_err());
     }
@@ -2023,6 +2171,66 @@ mod tests {
         let (kind, retry) = classify_connection(Some(255), "ssh: connect: No route to host");
         assert!(matches!(kind, ResultKind::Unreachable));
         assert!(retry);
+    }
+
+    #[test]
+    fn noninteractive_commands_have_output_and_time_limits() {
+        let mut normal = Command::new("sh");
+        normal.args(["-c", "printf ok; printf warn >&2"]);
+        let output = bounded_output_with(&mut normal, None, Duration::from_secs(1), 8).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"ok");
+        assert_eq!(output.stderr, b"warn");
+
+        let mut oversized = Command::new("sh");
+        oversized.args(["-c", "printf 123456789"]);
+        assert_eq!(
+            bounded_output_with(&mut oversized, None, Duration::from_secs(1), 8)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let mut stalled = Command::new("sh");
+        stalled.args(["-c", "exec sleep 2"]);
+        assert_eq!(
+            bounded_output_with(&mut stalled, None, Duration::from_millis(80), 8)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+
+        let mut password = Command::new("sh");
+        password.args(["-c", "read -r input; [ \"$input\" = test-only ]"]);
+        assert!(
+            bounded_output_with(&mut password, Some(b"test-only"), Duration::from_secs(1), 8)
+                .unwrap()
+                .status
+                .success()
+        );
+
+        let mut never_reads = Command::new("sh");
+        never_reads.args(["-c", "exec sleep 2"]);
+        assert_eq!(
+            bounded_output_with(
+                &mut never_reads,
+                Some(&vec![b'x'; 128 * 1024]),
+                Duration::from_millis(80),
+                8,
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::TimedOut
+        );
+
+        let mut floods = Command::new("sh");
+        floods.args(["-c", "while :; do printf 123456789; done"]);
+        assert_eq!(
+            bounded_output_with(&mut floods, None, Duration::from_secs(1), 8)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
