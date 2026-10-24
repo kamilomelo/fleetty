@@ -32,23 +32,28 @@ fn colorize(text: &str, color: Color, enabled: bool) -> String {
     }
 }
 
-fn banner_colorize(text: &str, enabled: bool) -> String {
-    if enabled {
-        format!("\x1b[1;34m{text}\x1b[0m")
+fn banner_lines(name: &str, version: &str, description: &str, color: bool) -> String {
+    let (dim, bold, reset, dot) = if color {
+        ("\x1b[2m", "\x1b[1m", "\x1b[0m", "\x1b[32m")
     } else {
-        text.to_owned()
-    }
+        ("", "", "", "")
+    };
+    format!(
+        "{dim}╭─{reset} {dot}●{reset} {bold}{name}{reset}  {dim}v{version}{reset}\n\
+         {dim}╰─❯{reset} {description}"
+    )
 }
 
 pub(crate) fn print_banner() {
-    const TITLE: &str = "Fleetty SSH Maintenance";
-    let rule = "=".repeat(TITLE.len());
-    let styled = colors_enabled() && io::stdout().is_terminal();
-    println!();
-    for line in [rule.as_str(), TITLE, rule.as_str()] {
-        println!("{}", banner_colorize(line, styled));
-    }
-    println!("Interactive maintenance for Arch Linux hosts.");
+    println!(
+        "\n{}",
+        banner_lines(
+            "fleetty",
+            env!("CARGO_PKG_VERSION"),
+            "your fleet, one terminal",
+            colors_enabled() && io::stdout().is_terminal(),
+        )
+    );
 }
 
 fn colors_enabled() -> bool {
@@ -230,8 +235,14 @@ mod tests {
             "\x1b[34m[update 5/5]\x1b[0m"
         );
         assert_eq!(colorize("failed", Color::Red, false), "failed");
-        assert_eq!(banner_colorize("Fleetty", false), "Fleetty");
-        assert_eq!(banner_colorize("Fleetty", true), "\x1b[1;34mFleetty\x1b[0m");
+        assert_eq!(
+            banner_lines("fleetty", "0.1.0", "your fleet, one terminal", false),
+            "╭─ ● fleetty  v0.1.0\n╰─❯ your fleet, one terminal"
+        );
+        assert_eq!(
+            banner_lines("fleetty", "0.1.0", "your fleet, one terminal", true),
+            "\x1b[2m╭─\x1b[0m \x1b[32m●\x1b[0m \x1b[1mfleetty\x1b[0m  \x1b[2mv0.1.0\x1b[0m\n\x1b[2m╰─❯\x1b[0m your fleet, one terminal"
+        );
     }
 
     #[test]

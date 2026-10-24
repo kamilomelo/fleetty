@@ -26,10 +26,10 @@ fn bare_command_opens_menu_and_creates_private_inventory_for_editing() {
     child.stdin.take().unwrap().write_all(b"2\n3\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    let title = "Fleetty SSH Maintenance";
-    let rule = "=".repeat(title.len());
-    let banner =
-        format!("\n{rule}\n{title}\n{rule}\nInteractive maintenance for Arch Linux hosts.\n");
+    let banner = format!(
+        "\n╭─ ● fleetty  v{}\n╰─❯ your fleet, one terminal\n",
+        env!("CARGO_PKG_VERSION")
+    );
     assert!(String::from_utf8_lossy(&output.stdout).starts_with(&banner));
     assert!(String::from_utf8_lossy(&output.stdout).contains("Edit inventory"));
     let directory = config.join("fleetty");
