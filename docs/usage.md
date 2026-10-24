@@ -129,8 +129,10 @@ compromised.
 
 ## Project map
 
-- `src/main.rs` — inventory, menus, SSH routines, update and reboot outcomes.
-- `src/auth.rs` — terminal password entry and local SSH askpass socket.
+- `src/main.rs` — CLI entry point; `src/routines.rs` — routine orchestration and reboot checks.
+- `src/inventory.rs` and `src/ui.rs` — inventory, selection, and terminal menus.
+- `src/ssh.rs` and `src/auth.rs` — SSH checks, credentials, and local askpass socket.
+- `src/update.rs`, `src/aur.rs`, and `src/results.rs` — updates, AUR choices, and outcomes.
 - `inventory.example.toml` — minimal example; `tests/` — local tests.
 
 Run checks with `cargo fmt --check`, `cargo test --locked`, and
