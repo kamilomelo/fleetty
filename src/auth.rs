@@ -1,10 +1,13 @@
 use std::{
     env,
-    fs::File,
+    fs::{File, Permissions},
     io::{self, BufRead, BufReader, Write},
     os::{
         fd::AsRawFd,
-        unix::net::{UnixListener, UnixStream},
+        unix::{
+            fs::PermissionsExt,
+            net::{UnixListener, UnixStream},
+        },
     },
     path::PathBuf,
     process::Command,
@@ -117,7 +120,8 @@ impl Auth {
         // The socket is only discoverable within a private, owner-only directory.
         let dir = tempfile::Builder::new()
             .prefix("fleetty-")
-            .tempdir_in("/tmp/opencode")
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
             .map_err(|e| e.to_string())?;
         let executable = dir.path().join("ssh-askpass");
         std::os::unix::fs::symlink(env::current_exe().map_err(|e| e.to_string())?, &executable)
@@ -188,4 +192,24 @@ pub fn askpass() -> Result<(), String> {
     let mut stream = UnixStream::connect(socket).map_err(|e| e.to_string())?;
     io::copy(&mut stream, &mut io::stdout()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn secret_socket_is_in_a_private_temporary_directory() {
+        let auth = Auth::for_test(b"test-secret");
+        assert_eq!(
+            std::fs::metadata(auth._dir.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert!(auth.path.exists());
+    }
 }

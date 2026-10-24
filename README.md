@@ -4,7 +4,7 @@ Fleetty is an early Rust terminal application for interactive SSH maintenance of
 
 ## Get started
 
-Install once from the project folder with `cargo install --path . --root ~/.local --offline`, then run **`fleetty`** from anywhere. This installs the executable in `~/.local/bin`, which needs to be on your shell's `PATH`. After code changes, rerun the install command with `--force` to update it. The home menu offers **Run routines**, **Edit inventory**, and **Exit**. Fleetty keeps its editable inventory at `~/.config/fleetty/inventory.toml`, or `$XDG_CONFIG_HOME/fleetty/inventory.toml` if set. If it does not exist yet, Edit inventory creates a commented example and opens `$VISUAL`, `$EDITOR`, `nano`, or `vi`. You may still specify another file: `fleetty /path/to/inventory.toml` (this skips the home menu).
+Install once from the project folder with `cargo install --path . --root ~/.local --locked` (add `--offline` if dependencies are already cached), then run **`fleetty`** from anywhere. This installs the executable in `~/.local/bin`, which needs to be on your shell's `PATH`. After code changes, rerun the install command with `--force` to update it. The home menu offers **Run routines**, **Edit inventory**, and **Exit**. Fleetty keeps its editable inventory at `~/.config/fleetty/inventory.toml`, or `$XDG_CONFIG_HOME/fleetty/inventory.toml` if set. If it does not exist yet, Edit inventory creates a commented example and opens `$VISUAL`, `$EDITOR`, `nano`, or `vi`. You may still specify another file: `fleetty /path/to/inventory.toml` (this skips the home menu).
 
 ```toml
 [pcs]

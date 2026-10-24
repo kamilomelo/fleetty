@@ -5,7 +5,7 @@ use std::{
 };
 
 fn run_with_choices(choices: &str) -> String {
-    let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let inventory = dir.path().join("inventory.toml");
     fs::write(
         &inventory,

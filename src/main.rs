@@ -2037,7 +2037,7 @@ mod tests {
     fn unchanged_packages_never_trigger_reboot() {
         use std::os::unix::fs::PermissionsExt;
         for changed in [false, true] {
-            let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+            let dir = tempfile::tempdir().unwrap();
             for (name, script) in [
                 (
                     "pacman",
@@ -2087,7 +2087,7 @@ mod tests {
     #[test]
     fn aur_failure_blocks_reboot() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         for (name, script) in [
             (
                 "pacman",
@@ -2124,7 +2124,7 @@ mod tests {
     #[test]
     fn aur_stage_starts_without_fleetty_sudo_timestamp() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         for (name, script) in [
             (
                 "pacman",
@@ -2182,7 +2182,7 @@ echo 'AUR ran without cached sudo'
     #[test]
     fn successful_aur_update_still_reboots_after_package_changes() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir_in("/tmp/opencode").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         for (name, script) in [
             (
                 "pacman",

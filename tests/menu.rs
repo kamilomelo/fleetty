@@ -7,7 +7,7 @@ use std::{
 
 #[test]
 fn bare_command_opens_menu_and_creates_private_inventory_for_editing() {
-    let home = tempfile::tempdir_in("/tmp/opencode").unwrap();
+    let home = tempfile::tempdir().unwrap();
     let config = home.path().join("config");
     let binary = std::env::current_exe()
         .unwrap()
