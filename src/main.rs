@@ -10,7 +10,7 @@ mod update;
 use crate::{
     inventory::{default_inventory_path, edit_inventory},
     routines::run_inventory,
-    ui::{Color, menu, stderr_color},
+    ui::{Color, menu, print_banner, stderr_color},
 };
 use std::{env, path::Path};
 
@@ -36,7 +36,7 @@ fn run() -> Result<(), String> {
     if args.next().is_some() {
         return Err("usage: fleetty [inventory.toml]".into());
     }
-    println!("=== Fleetty ===\nInteractive SSH maintenance\n");
+    print_banner();
     if let Some(path) = explicit {
         return run_inventory(Path::new(&path));
     }
