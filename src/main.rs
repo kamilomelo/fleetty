@@ -36,6 +36,7 @@ fn run() -> Result<(), String> {
     if args.next().is_some() {
         return Err("usage: fleetty [inventory.toml]".into());
     }
+    println!("=== Fleetty ===\nInteractive SSH maintenance\n");
     if let Some(path) = explicit {
         return run_inventory(Path::new(&path));
     }

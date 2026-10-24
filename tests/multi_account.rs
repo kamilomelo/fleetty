@@ -47,13 +47,22 @@ fn update_and_shutdown_choose_exactly_one_account() {
 }
 
 #[test]
-fn checks_and_custom_commands_keep_both_accounts() {
+fn checks_and_custom_commands_can_choose_one_or_all_accounts() {
     for routine in [1, 4] {
-        let output = run_with_choices(&format!("1\n{routine}\nn\n"));
+        let output = run_with_choices(&format!("1\n{routine}\n1\nn\n"));
         assert!(!output.contains("Choose ONE account"), "{output}");
+        assert!(
+            output.contains("Choose account(s) for 192.0.2.1"),
+            "{output}"
+        );
+        assert!(output.contains("1. All accounts"), "{output}");
         assert!(
             output.contains("Selected: admin@192.0.2.1, deploy@192.0.2.1"),
             "{output}"
         );
+
+        let output = run_with_choices(&format!("1\n{routine}\n3\nn\n"));
+        assert!(output.contains("Selected: deploy@192.0.2.1"), "{output}");
+        assert!(!output.contains("Selected: admin@192.0.2.1"), "{output}");
     }
 }

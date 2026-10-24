@@ -26,6 +26,10 @@ fn bare_command_opens_menu_and_creates_private_inventory_for_editing() {
     child.stdin.take().unwrap().write_all(b"2\n3\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .starts_with("=== Fleetty ===\nInteractive SSH maintenance\n")
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("Edit inventory"));
     let directory = config.join("fleetty");
     let inventory = directory.join("inventory.toml");

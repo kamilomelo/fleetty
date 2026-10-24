@@ -25,8 +25,10 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 - Quote IPv4/IPv6 addresses: dots otherwise become nested TOML keys. Spaces
   around `=` are fine. Use an array only for multiple usernames on one IP.
 - Choose all, a group, or individual accounts. The same IP/username in several
-  groups is visited once. Checks and custom commands can visit both accounts;
-  updates and shutdowns require one account choice per IP.
+  groups is visited once. Before entering the shared password, choose one or
+  all accounts for each IP with multiple usernames when checking or running
+  commands. Updates and shutdowns require exactly one account per IP. A check
+  of both accounts may ask again which passing account to use for an update.
 - A group beginning with `_` is **priority**: its machines run first, in numeric
   IP order. Other machines follow in numeric order. Priority applies to the
   entire IP, even when an account also belongs to a normal group. `[mgt]` alone

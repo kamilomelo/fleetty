@@ -32,9 +32,10 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
 ```
 
-Fleetty sorts by numeric IP. For updates and shutdowns it asks you to choose
-**one account per IP**; checks and custom commands can use both. The `_` prefix
-marks any group as priority. See the [inventory and run guide](docs/usage.md).
+Fleetty sorts by numeric IP. Before the password prompt, choose **one account
+per IP** for updates and shutdowns; checks and commands let you choose one or
+all accounts per IP. The `_` prefix marks any group as priority. See the
+[inventory and run guide](docs/usage.md).
 
 ## Routines
 

@@ -5,7 +5,8 @@ use crate::{
     results::{ResultKind, print_results, report_attention},
     ssh::{Credentials, boot_id, check_read_only, connect_account, prepare_sudo, shutdown, ssh},
     ui::{
-        Color, ask, choose_action_accounts, confirm, menu, select_hosts, stderr_color, stdout_color,
+        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, menu, select_hosts,
+        stderr_color, stdout_color,
     },
     update::{UpdateOutcome, update},
 };
@@ -37,10 +38,12 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
             "Run command (sequential)",
         ],
     )?;
-    let selected = if routine == 2 || routine == 3 {
-        choose_action_accounts(&selected, if routine == 2 { "update" } else { "shut down" })?
-    } else {
-        selected
+    let selected = match routine {
+        2 | 3 => {
+            choose_action_accounts(&selected, if routine == 2 { "update" } else { "shut down" })?
+        }
+        1 | 4 => choose_optional_accounts(&selected)?,
+        _ => unreachable!(),
     };
     println!(
         "Selected: {}",

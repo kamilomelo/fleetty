@@ -104,9 +104,36 @@ pub(crate) fn choose_action_accounts<'a>(
     })
 }
 
+pub(crate) fn choose_optional_accounts<'a>(hosts: &[&'a Host]) -> Result<Vec<&'a Host>, String> {
+    choose_accounts_with_choice(hosts, |address, accounts| {
+        let mut labels = vec!["All accounts"];
+        labels.extend(accounts.iter().map(|host| host.user.as_str()));
+        let choice = menu(&format!("Choose account(s) for {address}"), &labels)?;
+        Ok(if choice == 1 {
+            AccountChoice::All
+        } else {
+            AccountChoice::One(choice - 2)
+        })
+    })
+}
+
 fn choose_accounts_with<'a>(
     hosts: &[&'a Host],
     mut choose: impl FnMut(&str, &[&Host]) -> Result<usize, String>,
+) -> Result<Vec<&'a Host>, String> {
+    choose_accounts_with_choice(hosts, |address, accounts| {
+        choose(address, accounts).map(AccountChoice::One)
+    })
+}
+
+enum AccountChoice {
+    All,
+    One(usize),
+}
+
+fn choose_accounts_with_choice<'a>(
+    hosts: &[&'a Host],
+    mut choose: impl FnMut(&str, &[&Host]) -> Result<AccountChoice, String>,
 ) -> Result<Vec<&'a Host>, String> {
     let mut by_ip: HashMap<&str, usize> = HashMap::new();
     let mut machines: Vec<Vec<&Host>> = Vec::new();
@@ -124,8 +151,12 @@ fn choose_accounts_with<'a>(
             chosen.push(accounts[0]);
             continue;
         }
-        let choice = choose(&accounts[0].address, &accounts)?;
-        chosen.push(*accounts.get(choice).ok_or("invalid account selection")?);
+        match choose(&accounts[0].address, &accounts)? {
+            AccountChoice::All => chosen.extend(accounts),
+            AccountChoice::One(index) => {
+                chosen.push(*accounts.get(index).ok_or("invalid account selection")?);
+            }
+        }
     }
     chosen.sort_by_cached_key(|host| {
         (
@@ -206,6 +237,22 @@ mod tests {
         assert_eq!(action[0].target(), "deploy@192.0.2.2"); // priority applies across accounts
         assert_eq!(action[1].target(), "deploy@192.0.2.1");
         assert!(choose_accounts_with(&selected, |_, _| Ok(2)).is_err());
+
+        let mut choices = 0;
+        let checked = choose_accounts_with_choice(&selected, |_, _| {
+            choices += 1;
+            Ok(if choices == 1 {
+                AccountChoice::One(1)
+            } else {
+                AccountChoice::All
+            })
+        })
+        .unwrap();
+        assert_eq!(choices, 2);
+        assert_eq!(
+            checked.iter().map(|host| host.target()).collect::<Vec<_>>(),
+            ["deploy@192.0.2.2", "admin@192.0.2.1", "deploy@192.0.2.1",]
+        );
     }
 
     #[test]
