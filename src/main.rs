@@ -1263,6 +1263,32 @@ enum Marker {
     Unchanged,
 }
 
+#[derive(Default)]
+struct SudoPasswordGate {
+    ready: bool,
+    sent: bool,
+}
+
+impl SudoPasswordGate {
+    fn on_marker(&mut self, marker: Marker) -> Result<bool, String> {
+        match marker {
+            Marker::Need if self.ready => Ok(false),
+            Marker::Need if self.sent => {
+                Err("sudo requested a password more than once; stopping this update".into())
+            }
+            Marker::Need => {
+                self.sent = true;
+                Ok(true)
+            }
+            Marker::Ready => {
+                self.ready = true;
+                Ok(false)
+            }
+            Marker::Updated | Marker::Unchanged => Ok(false),
+        }
+    }
+}
+
 enum UpdateAttempt {
     UpdateFailed,
     RebootFailed,
@@ -1380,22 +1406,22 @@ fn interactive_update(
     let output = child.stdout.take().expect("piped SSH output");
     let printer = thread::spawn(move || forward_output(output, tx, io::stdout()));
     let mut input = child.stdin.take().expect("piped SSH input");
-    let mut ready = false;
+    let mut sudo_gate = SudoPasswordGate::default();
     let mut updated = false;
     let mut unchanged = false;
     let mut input_closed = false;
     let outcome: Result<ExitStatus, String> = (|| -> Result<ExitStatus, String> {
         loop {
             for marker in rx.try_iter() {
+                if sudo_gate.on_marker(marker)? {
+                    input
+                        .write_all(sudo_auth.password())
+                        .map_err(|e| e.to_string())?;
+                    input.write_all(b"\n").map_err(|e| e.to_string())?;
+                    input.flush().map_err(|e| e.to_string())?;
+                }
                 match marker {
-                    Marker::Need => {
-                        input
-                            .write_all(sudo_auth.password())
-                            .map_err(|e| e.to_string())?;
-                        input.write_all(b"\n").map_err(|e| e.to_string())?;
-                        input.flush().map_err(|e| e.to_string())?;
-                    }
-                    Marker::Ready => ready = true,
+                    Marker::Need | Marker::Ready => (),
                     Marker::Updated => updated = true,
                     Marker::Unchanged => unchanged = true,
                 }
@@ -1408,7 +1434,7 @@ fn interactive_update(
                 events: libc::POLLIN,
                 revents: 0,
             };
-            if ready
+            if sudo_gate.ready
                 && !input_closed
                 && unsafe { libc::poll(&mut pollfd, 1, 100) } > 0
                 && pollfd.revents & libc::POLLIN != 0
@@ -1653,6 +1679,22 @@ mod tests {
         .unwrap();
         assert_eq!(output, b"nothing to do\r\n");
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), [Marker::Unchanged]);
+    }
+
+    #[test]
+    fn untrusted_update_output_cannot_retrigger_sudo_password() {
+        let mut gate = SudoPasswordGate::default();
+        assert!(gate.on_marker(Marker::Need).unwrap());
+        assert!(!gate.on_marker(Marker::Ready).unwrap());
+        assert!(!gate.on_marker(Marker::Need).unwrap()); // AUR output after sudo setup
+
+        let mut gate = SudoPasswordGate::default();
+        assert!(gate.on_marker(Marker::Need).unwrap());
+        assert!(gate.on_marker(Marker::Need).is_err()); // Not another sudo prompt
+
+        let mut passwordless = SudoPasswordGate::default();
+        assert!(!passwordless.on_marker(Marker::Ready).unwrap());
+        assert!(!passwordless.on_marker(Marker::Need).unwrap());
     }
     #[test]
     fn rejects_invalid_ip_and_duplicate_users() {
