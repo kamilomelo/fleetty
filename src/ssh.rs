@@ -1,6 +1,6 @@
 use crate::{
     aur::Aur,
-    auth::Auth,
+    auth::{self, Auth},
     inventory::Host,
     results::ResultKind,
     ui::{Color, confirm, stdout_color},
@@ -84,6 +84,21 @@ pub(crate) fn ssh(host: &Host, remote: &str, interactive: bool, auth: &Auth) -> 
         .arg(remote);
     auth.configure(&mut cmd);
     cmd
+}
+
+pub(crate) fn sized_interactive_command(remote: &str) -> String {
+    with_terminal_size(remote, auth::terminal_size())
+}
+
+fn with_terminal_size(remote: &str, size: Option<(u16, u16)>) -> String {
+    match size {
+        Some((rows, cols)) if rows > 0 && cols > 0 => {
+            // These numbers come from TIOCGWINSZ, never from host output or
+            // user input. Failure to resize must not prevent maintenance.
+            format!("stty rows {rows} cols {cols} >/dev/null 2>&1 || :; {remote}")
+        }
+        _ => remote.to_owned(),
+    }
 }
 
 fn set_nonblocking(fd: i32) -> io::Result<()> {
@@ -552,7 +567,54 @@ pub(crate) fn check_read_only(host: &Host, auth: &Auth) -> Result<Aur, String> {
 mod tests {
     use super::*;
     use crate::results::ResultKind;
+    use std::os::fd::{FromRawFd, OwnedFd};
     use std::{collections::HashMap, process::Command};
+
+    #[test]
+    fn interactive_terminal_size_is_set_before_remote_work() {
+        let remote = with_terminal_size("printf ready", Some((42, 132)));
+        assert_eq!(
+            remote,
+            "stty rows 42 cols 132 >/dev/null 2>&1 || :; printf ready"
+        );
+        // Even without a PTY (as in this test), a failed stty cannot block
+        // the original remote command.
+        let output = Command::new("sh").arg("-c").arg(&remote).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"ready");
+        assert!(output.stderr.is_empty());
+        assert_eq!(with_terminal_size("printf ready", None), "printf ready");
+        assert_eq!(
+            with_terminal_size("printf ready", Some((0, 132))),
+            "printf ready"
+        );
+
+        // An SSH -tt session supplies a PTY. Confirm stty actually changes its
+        // geometry, not merely that the command string contains the numbers.
+        let (mut master, mut slave) = (-1, -1);
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        let _master = unsafe { OwnedFd::from_raw_fd(master) };
+        let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(with_terminal_size("stty size", Some((42, 132))))
+            .stdin(Stdio::from(slave))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"42 132\n");
+    }
     #[test]
     fn only_ssh_authentication_failure_offers_alternate_password() {
         assert!(authentication_failed(

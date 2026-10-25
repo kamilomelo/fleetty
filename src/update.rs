@@ -3,7 +3,7 @@ use crate::{
     auth::{self, Auth},
     inventory::Host,
     results::ResultKind,
-    ssh::{boot_id, detect_aur, preflight, shutdown, ssh},
+    ssh::{boot_id, detect_aur, preflight, shutdown, sized_interactive_command, ssh},
     ui::{Color, confirm, menu, stderr_color, stdout_color},
 };
 use std::{
@@ -151,7 +151,7 @@ fn interactive_update(
     // The ready/need markers let us send the password only during initial sudo
     // authentication. Later output (including AUR builds) cannot request it.
     // Interactive AUR prompts and reboot remain in this SSH terminal.
-    let remote = update_script(aur);
+    let remote = sized_interactive_command(&update_script(aur));
     let _raw = auth::raw_mode()?;
     let mut child = ssh(host, &remote, true, auth)
         .stdin(Stdio::piped())
@@ -273,7 +273,13 @@ pub(crate) fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<Updat
             ],
         )? {
             1 => {
-                let _ = ssh(host, "exec ${SHELL:-/bin/sh} -l", true, auth).status();
+                let _ = ssh(
+                    host,
+                    &sized_interactive_command("exec ${SHELL:-/bin/sh} -l"),
+                    true,
+                    auth,
+                )
+                .status();
             }
             2 => (),
             3 => return Ok(UpdateOutcome::Complete(ResultKind::Failed)),
@@ -351,7 +357,13 @@ pub(crate) fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<Updat
         )? {
             1 => continue,
             2 => {
-                let _ = ssh(host, "exec ${SHELL:-/bin/sh} -l", true, auth).status();
+                let _ = ssh(
+                    host,
+                    &sized_interactive_command("exec ${SHELL:-/bin/sh} -l"),
+                    true,
+                    auth,
+                )
+                .status();
                 continue;
             }
             3 => return Ok(UpdateOutcome::Complete(ResultKind::Failed)),

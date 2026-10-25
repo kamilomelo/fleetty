@@ -5,8 +5,8 @@ use crate::{
     results::{ResultKind, print_results, report_attention},
     ssh::{Credentials, boot_id, check_read_only, connect_account, prepare_sudo, shutdown, ssh},
     ui::{
-        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, menu, select_hosts,
-        stderr_color, stdout_color,
+        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, host_step, menu,
+        select_hosts, stderr_color, stdout_color,
     },
     update::{UpdateOutcome, update},
 };
@@ -95,9 +95,8 @@ fn run_shutdown(
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{} Checking {}",
-            stdout_color(&format!("[{}/{}]", i + 1, selected.len()), Color::Blue),
-            host.target()
+            "\n{}",
+            host_step("shutdown preflight", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
@@ -161,9 +160,8 @@ fn run_commands(
     let mut results = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{} {}",
-            stdout_color(&format!("[{}/{}]", i + 1, selected.len()), Color::Blue),
-            host.target()
+            "\n{}",
+            host_step("command", i + 1, selected.len(), &host.target())
         );
         let (label, result) = match connect_account(host, credentials) {
             Err(e) => {
@@ -199,12 +197,8 @@ fn check_then_optionally_update(
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{} {}",
-            stdout_color(
-                &format!("[check {}/{}]", i + 1, selected.len()),
-                Color::Blue
-            ),
-            host.target()
+            "\n{}",
+            host_step("check", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
@@ -292,9 +286,8 @@ fn run_updates(
     let mut pending = Vec::new();
     for (i, host) in hosts.iter().enumerate() {
         println!(
-            "\n{} {}",
-            stdout_color(&format!("[update {}/{}]", i + 1, hosts.len()), Color::Blue),
-            host.target()
+            "\n{}",
+            host_step("update", i + 1, hosts.len(), &host.target())
         );
         let (label, outcome, auth) = match connect_account(host, credentials) {
             Ok((name, auth)) => {

@@ -1,6 +1,9 @@
 mod aur;
 mod auth;
 mod inventory;
+#[rustfmt::skip] // Keep the copied kartouche template's code region easy to update upstream.
+#[allow(clippy::needless_borrow)] // Upstream template uses this borrow; leave its code region intact.
+mod kartouche;
 mod results;
 mod routines;
 mod ssh;

@@ -81,6 +81,8 @@ compromised.
    check-only run.
 2. **Update** checks the lock, clock, and boot ID again, then runs
    `sudo pacman -Syu` and `paru -Sua` or `yay -Sua` with live terminal output.
+   Fleetty sets the remote terminal to your local viewport size before the
+   interactive update starts; resizing the window mid-update is not synchronized.
    `paru` takes precedence. With neither helper, Fleetty asks before a
    pacman-only update. AUR review remains interactive; Fleetty does not keep
    sudo authenticated in the background and clears its timestamp before AUR,
@@ -135,6 +137,11 @@ compromised.
 - `src/inventory.rs` and `src/ui.rs` — inventory, selection, and terminal menus.
 - `src/ssh.rs` and `src/auth.rs` — SSH checks, credentials, and local askpass socket.
 - `src/update.rs`, `src/aur.rs`, and `src/results.rs` — updates, AUR choices, and outcomes.
+- `src/kartouche.rs` — locally copied [kartouche](https://github.com/kamilomelo/kartouche)
+  Rust template (MIT, [v2 source](https://github.com/kamilomelo/kartouche/blob/18d6ecf491f2a06dd855ca0b1b66ab9254b771fe/rust/kartouche.rs));
+  renders the gray banner and append-only host steps. Follow kartouche's
+  [update guide](https://github.com/kamilomelo/kartouche/blob/main/UPDATING.md)
+  when refreshing this local copy.
 - `inventory.example.toml` — minimal example; `tests/` — local tests.
 
 Run checks with `cargo fmt --check`, `cargo test --locked`, and

@@ -1,4 +1,7 @@
-use crate::inventory::Host;
+use crate::{
+    inventory::Host,
+    kartouche::{self, Stream, Style},
+};
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -7,7 +10,6 @@ use std::{
 };
 
 pub(crate) enum Color {
-    Blue,
     Green,
     Yellow,
     Red,
@@ -16,7 +18,6 @@ pub(crate) enum Color {
 impl Color {
     fn code(self) -> u8 {
         match self {
-            Self::Blue => 34,
             Self::Green => 32,
             Self::Yellow => 33,
             Self::Red => 31,
@@ -32,28 +33,28 @@ fn colorize(text: &str, color: Color, enabled: bool) -> String {
     }
 }
 
-fn banner_lines(name: &str, version: &str, description: &str, color: bool) -> String {
-    let (dim, bold, reset, dot) = if color {
-        ("\x1b[2m", "\x1b[1m", "\x1b[0m", "\x1b[32m")
-    } else {
-        ("", "", "", "")
-    };
-    format!(
-        "{dim}╭─{reset} {dot}●{reset} {bold}{name}{reset}  {dim}v{version}{reset}\n\
-         {dim}╰─❯{reset} {description}"
-    )
-}
-
 pub(crate) fn print_banner() {
     println!(
         "\n{}",
-        banner_lines(
+        kartouche::render_banner(
             "fleetty",
             env!("CARGO_PKG_VERSION"),
             "your fleet, one terminal",
-            colors_enabled() && io::stdout().is_terminal(),
+            None,
+            Stream::Stdout,
         )
     );
+}
+
+pub(crate) fn host_step(kind: &str, index: usize, total: usize, target: &str) -> String {
+    kartouche::render_frame(
+        Style::Inline,
+        index,
+        total,
+        &format!("{kind} {target}"),
+        &[],
+        Stream::Stdout,
+    )
 }
 
 fn colors_enabled() -> bool {
@@ -230,18 +231,16 @@ mod tests {
     use crate::inventory::{Inventory, build_hosts};
     #[test]
     fn progress_colors_are_optional() {
-        assert_eq!(
-            colorize("[update 5/5]", Color::Blue, true),
-            "\x1b[34m[update 5/5]\x1b[0m"
-        );
+        assert_eq!(colorize("done", Color::Green, true), "\x1b[32mdone\x1b[0m");
         assert_eq!(colorize("failed", Color::Red, false), "failed");
+        let prefix = if matches!(env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
+            "`->"
+        } else {
+            "╰─❯"
+        };
         assert_eq!(
-            banner_lines("fleetty", "0.1.0", "your fleet, one terminal", false),
-            "╭─ ● fleetty  v0.1.0\n╰─❯ your fleet, one terminal"
-        );
-        assert_eq!(
-            banner_lines("fleetty", "0.1.0", "your fleet, one terminal", true),
-            "\x1b[2m╭─\x1b[0m \x1b[32m●\x1b[0m \x1b[1mfleetty\x1b[0m  \x1b[2mv0.1.0\x1b[0m\n\x1b[2m╰─❯\x1b[0m your fleet, one terminal"
+            host_step("check", 2, 4, "admin@192.0.2.1"),
+            format!("{prefix} 2/4 check admin@192.0.2.1")
         );
     }
 

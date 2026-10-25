@@ -77,6 +77,20 @@ pub fn raw_mode() -> Result<Option<impl Drop>, String> {
     EchoGuard::raw(fd).map(Some)
 }
 
+// SSH's stdin is piped during interactive updates, so it cannot infer the
+// local terminal's geometry from stdin when allocating the remote PTY.
+pub fn terminal_size() -> Option<(u16, u16)> {
+    let tty = File::open("/dev/tty").ok()?;
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(tty.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } != 0
+        || size.ws_row == 0
+        || size.ws_col == 0
+    {
+        return None;
+    }
+    Some((size.ws_row, size.ws_col))
+}
+
 pub struct Auth {
     secret: Arc<Secret>,
     path: PathBuf,
