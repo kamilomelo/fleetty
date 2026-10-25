@@ -139,7 +139,8 @@ compromised.
 - `src/update.rs`, `src/aur.rs`, and `src/results.rs` — updates, AUR choices, and outcomes.
 - `src/kartouche.rs` — locally copied [kartouche](https://github.com/kamilomelo/kartouche)
   Rust template (MIT, [v2 source](https://github.com/kamilomelo/kartouche/blob/18d6ecf491f2a06dd855ca0b1b66ab9254b771fe/rust/kartouche.rs));
-  renders the gray banner and append-only host steps. Follow kartouche's
+  renders the gray banner and append-only dot steps (a line bar above 12 accounts).
+  Follow kartouche's
   [update guide](https://github.com/kamilomelo/kartouche/blob/main/UPDATING.md)
   when refreshing this local copy.
 - `inventory.example.toml` — minimal example; `tests/` — local tests.

@@ -48,13 +48,20 @@ pub(crate) fn print_banner() {
 
 pub(crate) fn host_step(kind: &str, index: usize, total: usize, target: &str) -> String {
     kartouche::render_frame(
-        Style::Inline,
+        Style::Dots,
         index,
         total,
         &format!("{kind} {target}"),
         &[],
         Stream::Stdout,
     )
+}
+
+pub(crate) fn print_steps_title() {
+    println!(
+        "\n{}",
+        kartouche::render_title("fleetty", env!("CARGO_PKG_VERSION"), Stream::Stdout)
+    );
 }
 
 fn colors_enabled() -> bool {
@@ -233,15 +240,23 @@ mod tests {
     fn progress_colors_are_optional() {
         assert_eq!(colorize("done", Color::Green, true), "\x1b[32mdone\x1b[0m");
         assert_eq!(colorize("failed", Color::Red, false), "failed");
-        let prefix = if matches!(env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
-            "`->"
+        let (progress, label) = if matches!(env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
+            ("|- **oo  2/4", "`->")
         } else {
-            "╰─❯"
+            ("├─ ●●○○  2/4", "╰─❯")
         };
         assert_eq!(
             host_step("check", 2, 4, "admin@192.0.2.1"),
-            format!("{prefix} 2/4 check admin@192.0.2.1")
+            format!("{progress}\n{label} check admin@192.0.2.1")
         );
+        let long_run = host_step("update", 2, 13, "admin@192.0.2.1");
+        assert!(long_run.contains("2/13"));
+        assert!(long_run.contains(if progress.starts_with("|-") {
+            "="
+        } else {
+            "━"
+        }));
+        assert!(long_run.contains("update admin@192.0.2.1"));
     }
 
     #[test]
