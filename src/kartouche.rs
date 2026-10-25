@@ -163,8 +163,9 @@ impl Drop for Steps {
 #[derive(Clone, Copy)]
 pub enum RailState { Success, Incomplete, Failed }
 
-pub fn render_results_rail(rows: &[(&str, String, RailState)], stream: Stream) -> String {
-    let mut lines = Vec::with_capacity(rows.len() + 1);
+pub fn render_results_rail(title: &str, rows: &[(&str, String, RailState)], stream: Stream) -> String {
+    let mut lines = Vec::with_capacity(rows.len() + 2);
+    lines.push(format!("{} {} results:", paint(&g("╭─"), "dim", stream), clean(title)));
     for (name, status, state) in rows {
         let (symbol, role) = match state {
             RailState::Success => ("✓", "green"),

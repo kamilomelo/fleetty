@@ -37,11 +37,10 @@ impl ResultKind {
 }
 
 pub(crate) fn print_results(title: &str, results: &[(String, ResultKind)]) {
-    println!("\n{title} results:");
-    println!("{}\n", result_rail(results));
+    println!("\n{}\n", result_rail(title, results));
 }
 
-fn result_rail(results: &[(String, ResultKind)]) -> String {
+fn result_rail(title: &str, results: &[(String, ResultKind)]) -> String {
     let rows: Vec<_> = results
         .iter()
         .map(|(name, result)| {
@@ -59,7 +58,7 @@ fn result_rail(results: &[(String, ResultKind)]) -> String {
             )
         })
         .collect();
-    kartouche::render_results_rail(&rows, Stream::Stdout)
+    kartouche::render_results_rail(title, &rows, Stream::Stdout)
 }
 
 fn unreachable_warning(count: usize) -> String {
@@ -120,7 +119,7 @@ mod tests {
             ("failed".into(), ResultKind::Failed),
             ("unknown".into(), ResultKind::Unknown),
         ];
-        let rendered = result_rail(&outcomes);
+        let rendered = result_rail("Read-only check", &outcomes);
         // Tests can run from a terminal, where kartouche emits ANSI styles.
         let mut rail = String::new();
         let mut chars = rendered.chars().peekable();
@@ -135,12 +134,17 @@ mod tests {
                 rail.push(ch);
             }
         }
-        let (branch, yes, pending, no, tail) =
+        let (header, branch, yes, pending, no, tail) =
             if matches!(std::env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
-                ("|-", "+", "o", "x", "`->")
+                (",-", "|-", "+", "o", "x", "`->")
             } else {
-                ("├─", "✓", "○", "✗", "╰─❯")
+                ("╭─", "├─", "✓", "○", "✗", "╰─❯")
             };
+        assert_eq!(
+            rail.lines().next(),
+            Some(format!("{header} Read-only check results:").as_str())
+        );
+        assert_eq!(rail.lines().count(), outcomes.len() + 2);
         for line in [
             format!("{branch} {yes} ok: done"),
             format!("{branch} {yes} unchanged: up to date (no reboot)"),
