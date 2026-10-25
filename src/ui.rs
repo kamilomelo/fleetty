@@ -57,13 +57,6 @@ pub(crate) fn host_step(kind: &str, index: usize, total: usize, target: &str) ->
     )
 }
 
-pub(crate) fn print_steps_title() {
-    println!(
-        "\n{}",
-        kartouche::render_title("fleetty", env!("CARGO_PKG_VERSION"), Stream::Stdout)
-    );
-}
-
 fn colors_enabled() -> bool {
     env::var_os("NO_COLOR").is_none() && env::var("TERM").ok().as_deref() != Some("dumb")
 }

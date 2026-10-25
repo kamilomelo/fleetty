@@ -1,4 +1,7 @@
-use crate::ui::{Color, stderr_color, stdout_color};
+use crate::{
+    kartouche::{self, RailState, Stream},
+    ui::{Color, stderr_color, stdout_color},
+};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ResultKind {
@@ -35,9 +38,28 @@ impl ResultKind {
 
 pub(crate) fn print_results(title: &str, results: &[(String, ResultKind)]) {
     println!("\n{title} results:");
-    for (name, result) in results {
-        println!("  {name}: {}", stdout_color(result.label(), result.color()));
-    }
+    println!("{}", result_rail(results));
+}
+
+fn result_rail(results: &[(String, ResultKind)]) -> String {
+    let rows: Vec<_> = results
+        .iter()
+        .map(|(name, result)| {
+            let state = match result {
+                ResultKind::Done | ResultKind::Unchanged => RailState::Success,
+                ResultKind::Skipped | ResultKind::Unreachable | ResultKind::Requested => {
+                    RailState::Incomplete
+                }
+                ResultKind::Failed | ResultKind::Unknown => RailState::Failed,
+            };
+            (
+                name.as_str(),
+                stdout_color(result.label(), result.color()),
+                state,
+            )
+        })
+        .collect();
+    kartouche::render_results_rail(&rows, Stream::Stdout)
 }
 
 fn unreachable_warning(count: usize) -> String {
@@ -87,6 +109,54 @@ pub(crate) fn report_attention(results: &[(String, ResultKind)]) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rail_distinguishes_success_from_incomplete_and_failed_outcomes() {
+        let outcomes = vec![
+            ("ok".into(), ResultKind::Done),
+            ("unchanged".into(), ResultKind::Unchanged),
+            ("skipped".into(), ResultKind::Skipped),
+            ("offline".into(), ResultKind::Unreachable),
+            ("shutdown".into(), ResultKind::Requested),
+            ("failed".into(), ResultKind::Failed),
+            ("unknown".into(), ResultKind::Unknown),
+        ];
+        let rendered = result_rail(&outcomes);
+        // Tests can run from a terminal, where kartouche emits ANSI styles.
+        let mut rail = String::new();
+        let mut chars = rendered.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' && chars.next_if_eq(&'[').is_some() {
+                for code in chars.by_ref() {
+                    if code == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                rail.push(ch);
+            }
+        }
+        let (branch, yes, pending, no, tail) =
+            if matches!(std::env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
+                ("|-", "+", "o", "x", "`->")
+            } else {
+                ("├─", "✓", "○", "✗", "╰─❯")
+            };
+        for line in [
+            format!("{branch} {yes} ok: done"),
+            format!("{branch} {yes} unchanged: up to date (no reboot)"),
+            format!("{branch} {pending} skipped: skipped"),
+            format!("{branch} {pending} offline: unreachable"),
+            format!("{branch} {pending} shutdown: request sent (not verified)"),
+            format!("{branch} {no} failed: failed"),
+            format!("{branch} {no} unknown: shutdown outcome unknown"),
+            format!("{tail} 7/7 reported"),
+        ] {
+            assert!(
+                rail.lines().any(|actual| actual == line),
+                "missing {line} in {rail}"
+            );
+        }
+    }
     #[test]
     fn unreachable_hosts_are_warnings_but_real_failures_are_errors() {
         assert!(unreachable_warning(1).contains("1 unreachable host."));

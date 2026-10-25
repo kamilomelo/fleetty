@@ -107,6 +107,9 @@ compromised.
 
 ## Results and safety
 
+- Final results use a rail: `✓` means done (including no package changes),
+  `○` means skipped, unreachable, or a shutdown request not verified, and `✗`
+  means failed or unknown shutdown outcome. The label gives the exact status.
 - Noninteractive SSH checks and shutdown requests have a 30-second deadline
   and a 16 KiB output limit per stream. Interactive updates and custom commands
   have no automatic deadline, since AUR builds and user commands may take a

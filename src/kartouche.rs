@@ -157,3 +157,22 @@ impl Drop for Steps {
     }
 }
 // kartouche:code end
+
+// Fleetty-only rail outcome renderer. Keep this outside the upstream code
+// markers so kartouche's template can be refreshed without losing it.
+#[derive(Clone, Copy)]
+pub enum RailState { Success, Incomplete, Failed }
+
+pub fn render_results_rail(rows: &[(&str, String, RailState)], stream: Stream) -> String {
+    let mut lines = Vec::with_capacity(rows.len() + 1);
+    for (name, status, state) in rows {
+        let (symbol, role) = match state {
+            RailState::Success => ("✓", "green"),
+            RailState::Incomplete => ("○", "accent"),
+            RailState::Failed => ("✗", "red"),
+        };
+        lines.push(format!("{}{} {}: {}", prefix('├', stream), paint(&g(symbol), role, stream), clean(name), clean(status)));
+    }
+    lines.push(format!("{}{}/{} reported", tail(stream), rows.len(), rows.len()));
+    lines.join("\n")
+}

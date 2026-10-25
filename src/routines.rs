@@ -6,7 +6,7 @@ use crate::{
     ssh::{Credentials, boot_id, check_read_only, connect_account, prepare_sudo, shutdown, ssh},
     ui::{
         Color, ask, choose_action_accounts, choose_optional_accounts, confirm, host_step, menu,
-        print_steps_title, select_hosts, stderr_color, stdout_color,
+        select_hosts, stderr_color, stdout_color,
     },
     update::{UpdateOutcome, update},
 };
@@ -93,13 +93,9 @@ fn run_shutdown(
     let mut results = Vec::new();
     // Preflight runs one host at a time; shutdown requests are dispatched together.
     let mut ready = Vec::new();
-    print_steps_title();
     for (i, host) in selected.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
         println!(
-            "{}",
+            "\n{}",
             host_step("shutdown preflight", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
@@ -162,13 +158,9 @@ fn run_commands(
     credentials: &mut Credentials,
 ) -> Vec<(String, ResultKind)> {
     let mut results = Vec::new();
-    print_steps_title();
     for (i, host) in selected.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
         println!(
-            "{}",
+            "\n{}",
             host_step("command", i + 1, selected.len(), &host.target())
         );
         let (label, result) = match connect_account(host, credentials) {
@@ -203,13 +195,9 @@ fn check_then_optionally_update(
 ) -> Result<(), String> {
     let mut checked = Vec::new();
     let mut ready = Vec::new();
-    print_steps_title();
     for (i, host) in selected.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
         println!(
-            "{}",
+            "\n{}",
             host_step("check", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
@@ -296,13 +284,9 @@ fn run_updates(
 ) -> Result<Vec<(String, ResultKind)>, String> {
     let mut results = Vec::new();
     let mut pending = Vec::new();
-    print_steps_title();
     for (i, host) in hosts.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
         println!(
-            "{}",
+            "\n{}",
             host_step("update", i + 1, hosts.len(), &host.target())
         );
         let (label, outcome, auth) = match connect_account(host, credentials) {
