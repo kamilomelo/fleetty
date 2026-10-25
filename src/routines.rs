@@ -12,6 +12,7 @@ use crate::{
 };
 use std::{
     env, fs, io,
+    io::Write,
     path::Path,
     sync::Arc,
     thread,
@@ -36,14 +37,12 @@ fn step_delay(value: Option<&str>) -> Result<Duration, String> {
     Ok(Duration::from_secs(seconds.into()))
 }
 
-fn pause_between_hosts(index: usize, total: usize, delay: Duration) {
-    if should_pause_between_hosts(index, total, delay) {
+fn show_host_step(kind: &str, index: usize, total: usize, target: &str, delay: Duration) {
+    println!("\n{}\n", host_step(kind, index, total, target));
+    if !delay.is_zero() {
+        io::stdout().flush().expect("failed to flush host step");
         thread::sleep(delay);
     }
-}
-
-fn should_pause_between_hosts(index: usize, total: usize, delay: Duration) -> bool {
-    index + 1 < total && !delay.is_zero()
 }
 
 pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
@@ -128,9 +127,12 @@ fn run_shutdown(
     // Preflight runs one host at a time; shutdown requests are dispatched together.
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
-        println!(
-            "\n{}\n",
-            host_step("shutdown preflight", i + 1, selected.len(), &host.target())
+        show_host_step(
+            "shutdown preflight",
+            i + 1,
+            selected.len(),
+            &host.target(),
+            delay,
         );
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
@@ -154,7 +156,6 @@ fn run_shutdown(
                 results.push((host.target(), e.kind));
             }
         }
-        pause_between_hosts(i, selected.len(), delay);
     }
     println!(
         "Sending shutdown requests to {} reachable host(s).",
@@ -195,10 +196,7 @@ fn run_commands(
 ) -> Vec<(String, ResultKind)> {
     let mut results = Vec::new();
     for (i, host) in selected.iter().enumerate() {
-        println!(
-            "\n{}\n",
-            host_step("command", i + 1, selected.len(), &host.target())
-        );
+        show_host_step("command", i + 1, selected.len(), &host.target(), delay);
         let (label, result) = match connect_account(host, credentials) {
             Err(e) => {
                 eprintln!(
@@ -221,7 +219,6 @@ fn run_commands(
             }
         };
         results.push((label, result));
-        pause_between_hosts(i, selected.len(), delay);
     }
     results
 }
@@ -234,10 +231,7 @@ fn check_then_optionally_update(
     let mut checked = Vec::new();
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
-        println!(
-            "\n{}\n",
-            host_step("check", i + 1, selected.len(), &host.target())
-        );
+        show_host_step("check", i + 1, selected.len(), &host.target(), delay);
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 let label = format!("{name} ({})", host.target());
@@ -272,7 +266,6 @@ fn check_then_optionally_update(
                 checked.push((host.target(), err.kind));
             }
         }
-        pause_between_hosts(i, selected.len(), delay);
     }
     print_results("Read-only check", &checked);
     if ready.is_empty() {
@@ -325,10 +318,7 @@ fn run_updates(
     let mut results = Vec::new();
     let mut pending = Vec::new();
     for (i, host) in hosts.iter().enumerate() {
-        println!(
-            "\n{}\n",
-            host_step("update", i + 1, hosts.len(), &host.target())
-        );
+        show_host_step("update", i + 1, hosts.len(), &host.target(), delay);
         let (label, outcome, auth) = match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 println!("Found {name} ({})", host.target());
@@ -392,7 +382,6 @@ fn run_updates(
                 }
             }
         }
-        pause_between_hosts(i, hosts.len(), delay);
     }
     if !pending.is_empty() {
         println!("\nVerifying {} reboot(s) in parallel...", pending.len());
@@ -468,17 +457,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn optional_step_delay_only_applies_between_hosts() {
+    fn optional_step_delay_is_configurable() {
         assert_eq!(step_delay(None).unwrap(), Duration::ZERO);
         assert_eq!(step_delay(Some("3")).unwrap(), Duration::from_secs(3));
         for invalid in ["", "-1", "1.5", "61", "999999"] {
             assert!(step_delay(Some(invalid)).is_err());
         }
-        let delay = Duration::from_secs(3);
-        assert!(should_pause_between_hosts(0, 2, delay));
-        assert!(!should_pause_between_hosts(1, 2, delay));
-        assert!(!should_pause_between_hosts(0, 1, delay));
-        assert!(!should_pause_between_hosts(0, 2, Duration::ZERO));
     }
 
     #[test]

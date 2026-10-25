@@ -73,13 +73,13 @@ compromised.
 
 ## What each routine does
 
-Host steps proceed without a delay by default. To leave three seconds to read
-each host's output before the next account starts, run
-`FLEETTY_STEP_DELAY_SECONDS=3 fleetty`. This local pause applies between
-accounts during checks, updates, shutdown preflight, and custom commands (not
-after the last account); it does not pause interactive pacman/AUR prompts.
-Shutdown requests are still dispatched together after preflight. Values from
-0 to 60 seconds are allowed.
+Host steps proceed without a delay by default. To show each dot step for three
+seconds before connecting to that account, run
+`FLEETTY_STEP_DELAY_SECONDS=3 fleetty`. The same local pause applies to every
+step (including the first and last) during checks, updates, shutdown preflight,
+and custom commands. It does not pause interactive pacman/AUR prompts. Shutdown
+requests are still dispatched together after preflight. Values from 0 to 60
+seconds are allowed.
 
 1. **Check, then optionally update** runs read-only SSH checks for each
    selected account: hostname, clock (within two minutes of this computer),
