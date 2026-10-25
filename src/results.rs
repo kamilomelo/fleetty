@@ -38,7 +38,7 @@ impl ResultKind {
 
 pub(crate) fn print_results(title: &str, results: &[(String, ResultKind)]) {
     println!("\n{title} results:");
-    println!("{}", result_rail(results));
+    println!("{}\n", result_rail(results));
 }
 
 fn result_rail(results: &[(String, ResultKind)]) -> String {
