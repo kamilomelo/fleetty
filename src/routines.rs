@@ -21,10 +21,11 @@ use std::{
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(300);
 const STEP_DELAY_ENV: &str = "FLEETTY_STEP_DELAY_SECONDS";
+const DEFAULT_STEP_DELAY: Duration = Duration::from_secs(2);
 
 fn step_delay(value: Option<&str>) -> Result<Duration, String> {
     let Some(value) = value else {
-        return Ok(Duration::ZERO);
+        return Ok(DEFAULT_STEP_DELAY);
     };
     let seconds = value
         .parse::<u8>()
@@ -457,8 +458,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn optional_step_delay_is_configurable() {
-        assert_eq!(step_delay(None).unwrap(), Duration::ZERO);
+    fn step_delay_defaults_to_two_seconds_and_is_configurable() {
+        assert_eq!(step_delay(None).unwrap(), Duration::from_secs(2));
+        assert_eq!(step_delay(Some("0")).unwrap(), Duration::ZERO);
         assert_eq!(step_delay(Some("3")).unwrap(), Duration::from_secs(3));
         for invalid in ["", "-1", "1.5", "61", "999999"] {
             assert!(step_delay(Some(invalid)).is_err());
