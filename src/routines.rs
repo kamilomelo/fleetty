@@ -95,7 +95,7 @@ fn run_shutdown(
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{}",
+            "\n{}\n",
             host_step("shutdown preflight", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
@@ -160,7 +160,7 @@ fn run_commands(
     let mut results = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{}",
+            "\n{}\n",
             host_step("command", i + 1, selected.len(), &host.target())
         );
         let (label, result) = match connect_account(host, credentials) {
@@ -197,7 +197,7 @@ fn check_then_optionally_update(
     let mut ready = Vec::new();
     for (i, host) in selected.iter().enumerate() {
         println!(
-            "\n{}",
+            "\n{}\n",
             host_step("check", i + 1, selected.len(), &host.target())
         );
         match connect_account(host, credentials) {
@@ -286,7 +286,7 @@ fn run_updates(
     let mut pending = Vec::new();
     for (i, host) in hosts.iter().enumerate() {
         println!(
-            "\n{}",
+            "\n{}\n",
             host_step("update", i + 1, hosts.len(), &host.target())
         );
         let (label, outcome, auth) = match connect_account(host, credentials) {
