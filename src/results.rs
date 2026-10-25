@@ -1,5 +1,5 @@
 use crate::{
-    kartouche::{self, RailState, Stream},
+    kartouche::{self, Outcome, Stream, Style},
     ui::{Color, stderr_color, stdout_color},
 };
 
@@ -37,28 +37,37 @@ impl ResultKind {
 }
 
 pub(crate) fn print_results(title: &str, results: &[(String, ResultKind)]) {
-    println!("\n{}\n", result_rail(title, results));
+    println!("\n{}\n", result_summary(title, results));
 }
 
-fn result_rail(title: &str, results: &[(String, ResultKind)]) -> String {
+fn result_summary(title: &str, results: &[(String, ResultKind)]) -> String {
     let rows: Vec<_> = results
         .iter()
         .map(|(name, result)| {
-            let state = match result {
-                ResultKind::Done | ResultKind::Unchanged => RailState::Success,
+            let outcome = match result {
+                ResultKind::Done | ResultKind::Unchanged => Outcome::Ok,
                 ResultKind::Skipped | ResultKind::Unreachable | ResultKind::Requested => {
-                    RailState::Incomplete
+                    Outcome::Skipped
                 }
-                ResultKind::Failed | ResultKind::Unknown => RailState::Failed,
+                ResultKind::Failed | ResultKind::Unknown => Outcome::Failed,
             };
             (
-                name.as_str(),
-                stdout_color(result.label(), result.color()),
-                state,
+                format!("{name}: {}", stdout_color(result.label(), result.color())),
+                outcome,
             )
         })
         .collect();
-    kartouche::render_results_rail(title, &rows, Stream::Stdout)
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(label, outcome)| (label.as_str(), *outcome))
+        .collect();
+    kartouche::render_summary(
+        Style::Rail,
+        &format!("{title} results:"),
+        "",
+        &items,
+        Stream::Stdout,
+    )
 }
 
 fn unreachable_warning(count: usize) -> String {
@@ -109,7 +118,7 @@ pub(crate) fn report_attention(results: &[(String, ResultKind)]) -> Result<(), S
 mod tests {
     use super::*;
     #[test]
-    fn rail_distinguishes_success_from_incomplete_and_failed_outcomes() {
+    fn summary_rail_distinguishes_success_from_incomplete_and_failed_outcomes() {
         let outcomes = vec![
             ("ok".into(), ResultKind::Done),
             ("unchanged".into(), ResultKind::Unchanged),
@@ -119,7 +128,7 @@ mod tests {
             ("failed".into(), ResultKind::Failed),
             ("unknown".into(), ResultKind::Unknown),
         ];
-        let rendered = result_rail("Read-only check", &outcomes);
+        let rendered = result_summary("Read-only check", &outcomes);
         // Tests can run from a terminal, where kartouche emits ANSI styles.
         let mut rail = String::new();
         let mut chars = rendered.chars().peekable();
@@ -134,11 +143,11 @@ mod tests {
                 rail.push(ch);
             }
         }
-        let (header, branch, yes, pending, no, tail) =
+        let (header, branch, yes, pending, no, tail, dot) =
             if matches!(std::env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
-                (",-", "|-", "+", "o", "x", "`->")
+                (",- *", "|-", "+", "o", "x", "`-", ".")
             } else {
-                ("╭─", "├─", "✓", "○", "✗", "╰─❯")
+                ("╭─ ●", "├─", "✓", "○", "✗", "╰─", "·")
             };
         assert_eq!(
             rail.lines().next(),
@@ -153,7 +162,7 @@ mod tests {
             format!("{branch} {pending} shutdown: request sent (not verified)"),
             format!("{branch} {no} failed: failed"),
             format!("{branch} {no} unknown: shutdown outcome unknown"),
-            format!("{tail} 7/7 reported"),
+            format!("{tail} {no} 2 ok {dot} 2 failed {dot} 3 skipped"),
         ] {
             assert!(
                 rail.lines().any(|actual| actual == line),

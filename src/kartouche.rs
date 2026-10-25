@@ -1,7 +1,7 @@
 // kartouche — copy this file into your project; https://github.com/kamilomelo/kartouche
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kamilo Melo
-// KARTOUCHE_TEMPLATE_VERSION: 2
+// KARTOUCHE_TEMPLATE_VERSION: 3
 #![allow(dead_code)]
 
 // kartouche:config begin
@@ -13,7 +13,7 @@ const APPEND_ONLY: bool = true;
 const GLYPHS: &str = "auto";
 // kartouche:config end
 
-// kartouche:code begin v2
+// kartouche:code begin v3
 use std::io::{self, IsTerminal, Write};
 use std::time::Instant;
 
@@ -21,6 +21,8 @@ use std::time::Instant;
 pub enum Stream { Stdout, Stderr }
 #[derive(Clone, Copy)]
 pub enum Style { Inline, Dots, Crumbs, Rail, Line, Log }
+#[derive(Clone, Copy)]
+pub enum Outcome { Ok, Failed, Skipped }
 
 fn terminal(stream: Stream) -> bool {
     match stream { Stream::Stdout => io::stdout().is_terminal(), Stream::Stderr => io::stderr().is_terminal() }
@@ -107,6 +109,35 @@ pub fn render_frame(style: Style, n: usize, total: usize, label: &str, labels: &
     lines.push(format!("{}{last}", tail(stream)));
     lines.join("\n")
 }
+pub fn render_summary(style: Style, name: &str, version: &str, items: &[(&str, Outcome)], stream: Stream) -> String {
+    if !matches!(style, Style::Rail | Style::Log) { return String::new(); }
+    let (mut ok, mut failed, mut skipped) = (0, 0, 0);
+    let longest = items.iter().map(|(label, _)| clean(label).chars().count()).max().unwrap_or(0);
+    let mut lines = vec![render_title(name, version, stream)];
+    for (i, (label, outcome)) in items.iter().enumerate() {
+        let label = clean(label);
+        let (symbol, role, state) = match outcome {
+            Outcome::Ok => { ok += 1; ("✓", "green", "ok") },
+            Outcome::Failed => { failed += 1; ("✗", "red", "failed") },
+            Outcome::Skipped => { skipped += 1; ("○", "dim", "skipped") },
+        };
+        if matches!(style, Style::Rail) {
+            lines.push(format!("{}{} {label}", prefix('├', stream), paint(&g(symbol), role, stream)));
+        } else {
+            let dots = g(&"·".repeat(longest-label.chars().count()+7));
+            let role = if matches!(outcome, Outcome::Ok) { "accent" } else { role };
+            lines.push(format!("{}{}/{} {label} {dots} {}", prefix('├', stream), i+1, items.len(), paint(state, role, stream)));
+        }
+    }
+    let (symbol, role) = if failed > 0 { ("✗", "red") } else if skipped > 0 || items.is_empty() { ("○", "dim") } else { ("✓", "green") };
+    lines.push(format!("{} {} {ok} ok {} {failed} failed {} {skipped} skipped", paint(&g("╰─"), "dim", stream),
+        paint(&g(symbol), role, stream), g("·"), g("·")));
+    lines.join("\n")
+}
+pub fn summary(style: Style, items: &[(&str, Outcome)]) {
+    let text = render_summary(style, NAME, VERSION, items, Stream::Stderr);
+    if !text.is_empty() { let _ = writeln!(io::stderr(), "{text}"); }
+}
 pub fn banner(status: Option<&str>) { let _ = writeln!(io::stderr(), "{}", render_banner(NAME, VERSION, DESCRIPTION, status, Stream::Stderr)); }
 pub fn card() { let _ = writeln!(io::stderr(), "{}", render_card(NAME, VERSION, DESCRIPTION, Stream::Stderr)); }
 
@@ -157,23 +188,3 @@ impl Drop for Steps {
     }
 }
 // kartouche:code end
-
-// Fleetty-only rail outcome renderer. Keep this outside the upstream code
-// markers so kartouche's template can be refreshed without losing it.
-#[derive(Clone, Copy)]
-pub enum RailState { Success, Incomplete, Failed }
-
-pub fn render_results_rail(title: &str, rows: &[(&str, String, RailState)], stream: Stream) -> String {
-    let mut lines = Vec::with_capacity(rows.len() + 2);
-    lines.push(format!("{} {} results:", paint(&g("╭─"), "dim", stream), clean(title)));
-    for (name, status, state) in rows {
-        let (symbol, role) = match state {
-            RailState::Success => ("✓", "green"),
-            RailState::Incomplete => ("○", "accent"),
-            RailState::Failed => ("✗", "red"),
-        };
-        lines.push(format!("{}{} {}: {}", prefix('├', stream), paint(&g(symbol), role, stream), clean(name), clean(status)));
-    }
-    lines.push(format!("{}{}/{} reported", tail(stream), rows.len(), rows.len()));
-    lines.join("\n")
-}

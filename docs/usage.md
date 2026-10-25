@@ -115,9 +115,11 @@ seconds are allowed.
 
 ## Results and safety
 
-- Final results use a rail: `✓` means done (including no package changes),
-  `○` means skipped, unreachable, or a shutdown request not verified, and `✗`
-  means failed or unknown shutdown outcome. The label gives the exact status.
+- Final results use kartouche's summary rail: `✓` means done (including no
+  package changes), `○` means skipped, unreachable, or a shutdown request not
+  verified, and `✗` means failed or unknown shutdown outcome. The label gives
+  the exact status. The footer counts unreachable and unverified requests in
+  kartouche's broader **skipped** category; they remain distinct in the labels.
 - Noninteractive SSH checks and shutdown requests have a 30-second deadline
   and a 16 KiB output limit per stream. Interactive updates and custom commands
   have no automatic deadline, since AUR builds and user commands may take a
@@ -149,8 +151,9 @@ seconds are allowed.
 - `src/ssh.rs` and `src/auth.rs` — SSH checks, credentials, and local askpass socket.
 - `src/update.rs`, `src/aur.rs`, and `src/results.rs` — updates, AUR choices, and outcomes.
 - `src/kartouche.rs` — locally copied [kartouche](https://github.com/kamilomelo/kartouche)
-  Rust template (MIT, [v2 source](https://github.com/kamilomelo/kartouche/blob/18d6ecf491f2a06dd855ca0b1b66ab9254b771fe/rust/kartouche.rs));
-  renders the gray banner and append-only dot steps (a line bar above 12 accounts).
+  Rust template (MIT, [v3 source](https://github.com/kamilomelo/kartouche/blob/26c10e8bcffcde4af82d9e9bc7238d020ea11042/rust/kartouche.rs));
+  renders the gray banner, append-only dot steps (a line bar above 12 accounts),
+  and the results summary rail.
   Follow kartouche's
   [update guide](https://github.com/kamilomelo/kartouche/blob/main/UPDATING.md)
   when refreshing this local copy.
