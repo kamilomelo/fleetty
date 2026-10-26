@@ -30,6 +30,9 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 
 [_core]
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
+
+[-optional]
+"198.51.100.10" = "admin" # Excluded from "all" unless you opt in
 ```
 
 Fleetty sorts by numeric IP. Before the password prompt, choose **one account

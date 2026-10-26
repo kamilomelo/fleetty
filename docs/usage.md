@@ -20,6 +20,9 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 
 [_network]
 "192.0.2.1" = "admin"
+
+[-optional]
+"198.51.100.10" = "admin"
 ```
 
 - Quote IPv4/IPv6 addresses: dots otherwise become nested TOML keys. Spaces
