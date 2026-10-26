@@ -13,6 +13,7 @@
 # [_mgt]
 # "192.0.2.1" = "admin"
 
-# Exclude these machines from "all" by default; selecting this group still works.
+# Exclude these machines from "all" by default; this group appears last in the
+# selection menu (after individual hosts) and can still be selected explicitly.
 # [-optional]
 # "198.51.100.10" = "admin"
