@@ -33,6 +33,12 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
   IP order. Other machines follow in numeric order. Priority applies to the
   entire IP, even when an account also belongs to a normal group. `[mgt]` alone
   is not special; use `[_mgt]` if you want priority behavior.
+- A group beginning with `-`, such as `[-optional]`, is omitted when you choose
+  **all** unless you answer **Yes** to `Include excluded groups in all [y/N]`.
+  The default **No** excludes the entire IP, even when another account on it
+  belongs to a normal group. Selecting a group or an individual host explicitly
+  still includes it. Use `-` rather than `~` because TOML accepts `[-optional]`
+  without quotes; `~` would require `["~optional"]`.
 - Do not put passwords, private keys, or key paths in the inventory.
 
 ## SSH and passwords

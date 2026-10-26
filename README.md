@@ -34,7 +34,8 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 
 Fleetty sorts by numeric IP. Before the password prompt, choose **one account
 per IP** for updates and shutdowns; checks and commands let you choose one or
-all accounts per IP. The `_` prefix marks any group as priority. See the
+all accounts per IP. The `_` prefix marks a priority group; `-` (for example,
+`[-optional]`) excludes its machines from **all** unless you opt in. See the
 [inventory and run guide](docs/usage.md).
 
 ## Routines

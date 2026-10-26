@@ -101,7 +101,7 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     let mut hosts: Vec<Host> = Vec::new();
     let mut by_target: HashMap<(IpAddr, String), usize> = HashMap::new();
     for (group, entries) in inventory {
-        if group.trim().is_empty() || group == "_" || entries.is_empty() {
+        if group.trim().is_empty() || matches!(group.as_str(), "_" | "-") || entries.is_empty() {
             return Err(format!("empty group name or group with no hosts: {group}"));
         }
         for (address, usernames) in entries {
@@ -227,5 +227,18 @@ mod tests {
         );
         assert!(hosts[0].priority);
         assert!(!hosts[1].priority);
+    }
+
+    #[test]
+    fn excluded_group_names_are_valid_toml_and_not_priority() {
+        let inventory: Inventory = toml::from_str(
+            "[-optional]\n\"192.0.2.1\" = \"admin\"\n[servers]\n\"192.0.2.2\" = \"admin\"",
+        )
+        .unwrap();
+        let hosts = build_hosts(&inventory).unwrap();
+        assert_eq!(hosts.len(), 2);
+        assert!(hosts.iter().all(|host| !host.priority));
+        let empty_name: Inventory = toml::from_str("[-]\n\"192.0.2.1\" = \"admin\"").unwrap();
+        assert!(build_hosts(&empty_name).is_err());
     }
 }

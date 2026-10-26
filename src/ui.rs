@@ -84,8 +84,20 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
     println!("  {}. individual hosts", groups.len() + 2);
     let answer = ask("Choice: ")?;
     let choice: usize = answer.trim().parse().map_err(|_| "invalid selection")?;
-    let selected = if choice == 1 {
-        hosts.iter().collect()
+    let selected: Vec<&Host> = if choice == 1 {
+        let excluded_ips: HashSet<&str> = hosts
+            .iter()
+            .filter(|host| host.groups.iter().any(|group| group.starts_with('-')))
+            .map(|host| host.address.as_str())
+            .collect();
+        if !excluded_ips.is_empty() && !confirm("Include excluded groups in all")? {
+            hosts
+                .iter()
+                .filter(|host| !excluded_ips.contains(host.address.as_str()))
+                .collect()
+        } else {
+            hosts.iter().collect()
+        }
     } else if choice == groups.len() + 2 {
         for (i, host) in hosts.iter().enumerate() {
             println!("  {}. {}", i + 1, host.target());
@@ -113,6 +125,9 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
     } else {
         return Err("invalid selection".into());
     };
+    if selected.is_empty() {
+        return Err("no hosts selected; include excluded groups or choose a group/host".into());
+    }
     Ok(selected)
 }
 

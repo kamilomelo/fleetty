@@ -12,3 +12,7 @@
 # Optional priority group: run these first and confirm each reboot before moving on.
 # [_mgt]
 # "192.0.2.1" = "admin"
+
+# Exclude these machines from "all" by default; selecting this group still works.
+# [-optional]
+# "198.51.100.10" = "admin"
