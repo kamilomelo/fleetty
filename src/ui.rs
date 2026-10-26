@@ -74,14 +74,23 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
         .iter()
         .flat_map(|h| h.groups.iter().map(String::as_str))
         .collect();
-    groups.sort_unstable();
+    groups.sort_unstable_by(|a, b| {
+        a.starts_with('-')
+            .cmp(&b.starts_with('-'))
+            .then_with(|| a.cmp(b))
+    });
     groups.dedup();
+    let regular_count = groups.partition_point(|group| !group.starts_with('-'));
+    let individual_option = regular_count + 2;
     println!("Select hosts:");
     println!("  1. all");
-    for (i, group) in groups.iter().enumerate() {
+    for (i, group) in groups[..regular_count].iter().enumerate() {
         println!("  {}. group: {group}", i + 2);
     }
-    println!("  {}. individual hosts", groups.len() + 2);
+    println!("  {individual_option}. individual hosts");
+    for (i, group) in groups[regular_count..].iter().enumerate() {
+        println!("  {}. group: {group}", individual_option + i + 1);
+    }
     let answer = ask("Choice: ")?;
     let choice: usize = answer.trim().parse().map_err(|_| "invalid selection")?;
     let selected: Vec<&Host> = if choice == 1 {
@@ -98,7 +107,7 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
         } else {
             hosts.iter().collect()
         }
-    } else if choice == groups.len() + 2 {
+    } else if choice == individual_option {
         for (i, host) in hosts.iter().enumerate() {
             println!("  {}. {}", i + 1, host.target());
         }
@@ -117,10 +126,15 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
             .filter(|(i, _)| indices.contains(i))
             .map(|(_, h)| h)
             .collect()
-    } else if (2..groups.len() + 2).contains(&choice) {
+    } else if (2..=groups.len() + 2).contains(&choice) {
+        let index = if choice < individual_option {
+            choice - 2
+        } else {
+            choice - 3
+        };
         hosts
             .iter()
-            .filter(|h| h.groups.iter().any(|g| g == groups[choice - 2]))
+            .filter(|h| h.groups.iter().any(|g| g == groups[index]))
             .collect()
     } else {
         return Err("invalid selection".into());

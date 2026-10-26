@@ -85,6 +85,10 @@ fn all_excludes_marked_machines_unless_explicitly_included() {
     );
     assert!(text.contains("Selected: admin@192.0.2.1"), "{text}");
     assert!(!text.contains("Selected: admin@192.0.2.1,"), "{text}");
+    assert!(
+        text.contains("  2. group: servers\n  3. individual hosts\n  4. group: -optional"),
+        "{text}"
+    );
 
     // Opting in includes every account, even on an IP shared between groups.
     let output = run_with_inventory(inventory, "1\ny\n1\n1\nn\n");
@@ -98,7 +102,7 @@ fn all_excludes_marked_machines_unless_explicitly_included() {
     );
 
     // Explicit group and individual selections do not get the exclusion prompt.
-    let output = run_with_inventory(inventory, "2\n1\nn\n");
+    let output = run_with_inventory(inventory, "4\n1\nn\n");
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -110,7 +114,7 @@ fn all_excludes_marked_machines_unless_explicitly_included() {
         "{text}"
     );
 
-    let output = run_with_inventory(inventory, "4\n4\n1\nn\n");
+    let output = run_with_inventory(inventory, "3\n4\n1\nn\n");
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("Selected: admin@192.0.2.3"), "{text}");
