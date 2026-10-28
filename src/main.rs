@@ -13,7 +13,7 @@ mod update;
 use crate::{
     inventory::{default_inventory_path, edit_inventory},
     routines::run_inventory,
-    ui::{Color, menu, print_banner, stderr_color},
+    ui::{Color, menu, stderr_color},
 };
 use std::{env, path::Path};
 
@@ -39,13 +39,13 @@ fn run() -> Result<(), String> {
     if args.next().is_some() {
         return Err("usage: fleetty [inventory.toml]".into());
     }
-    print_banner();
+    kartouche::banner(None);
     if let Some(path) = explicit {
         return run_inventory(Path::new(&path));
     }
     let path = default_inventory_path()?;
     loop {
-        println!("\nInventory: {}", path.display());
+        println!("Inventory: {}", path.display());
         match menu("Fleetty", &["Run routines", "Edit inventory", "Exit"])? {
             1 => return run_inventory(&path),
             2 => edit_inventory(&path)?,

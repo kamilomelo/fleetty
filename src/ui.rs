@@ -1,7 +1,4 @@
-use crate::{
-    inventory::Host,
-    kartouche::{self, Stream, Style},
-};
+use crate::inventory::Host;
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -31,30 +28,6 @@ fn colorize(text: &str, color: Color, enabled: bool) -> String {
     } else {
         text.to_owned()
     }
-}
-
-pub(crate) fn print_banner() {
-    println!(
-        "\n{}",
-        kartouche::render_banner(
-            "fleetty",
-            env!("CARGO_PKG_VERSION"),
-            "your fleet, one terminal",
-            None,
-            Stream::Stdout,
-        )
-    );
-}
-
-pub(crate) fn host_step(kind: &str, index: usize, total: usize, target: &str) -> String {
-    kartouche::render_frame(
-        Style::Dots,
-        index,
-        total,
-        &format!("{kind} {target}"),
-        &[],
-        Stream::Stdout,
-    )
 }
 
 fn colors_enabled() -> bool {
@@ -259,26 +232,9 @@ mod tests {
     use super::*;
     use crate::inventory::{Inventory, build_hosts};
     #[test]
-    fn progress_colors_are_optional() {
+    fn colors_are_optional() {
         assert_eq!(colorize("done", Color::Green, true), "\x1b[32mdone\x1b[0m");
         assert_eq!(colorize("failed", Color::Red, false), "failed");
-        let (progress, label) = if matches!(env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
-            ("|- **oo  2/4", "`->")
-        } else {
-            ("├─ ●●○○  2/4", "╰─❯")
-        };
-        assert_eq!(
-            host_step("check", 2, 4, "admin@192.0.2.1"),
-            format!("{progress}\n{label} check admin@192.0.2.1")
-        );
-        let long_run = host_step("update", 2, 13, "admin@192.0.2.1");
-        assert!(long_run.contains("2/13"));
-        assert!(long_run.contains(if progress.starts_with("|-") {
-            "="
-        } else {
-            "━"
-        }));
-        assert!(long_run.contains("update admin@192.0.2.1"));
     }
 
     #[test]

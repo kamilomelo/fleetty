@@ -23,16 +23,18 @@ fn bare_command_opens_menu_and_creates_private_inventory_for_editing() {
         .env("VISUAL", "true")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(b"2\n3\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     let banner = format!(
-        "\n╭─ ● fleetty  v{}\n╰─❯ your fleet, one terminal\n",
+        "\n╭─ ● fleetty  v{}\n╰─❯ your fleet, one terminal\n\n",
         env!("CARGO_PKG_VERSION")
     );
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with(&banner));
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with(&banner));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Inventory:"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("Edit inventory"));
     let directory = config.join("fleetty");
     let inventory = directory.join("inventory.toml");
@@ -63,14 +65,15 @@ fn linux_console_uses_ascii_banner() {
         .env("NO_COLOR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(b"3\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stdout).starts_with(&format!(
-            "\n,- * fleetty  v{}\n`-> your fleet, one terminal\n",
+        String::from_utf8_lossy(&output.stderr).starts_with(&format!(
+            "\n,- * fleetty  v{}\n`-> your fleet, one terminal\n\n",
             env!("CARGO_PKG_VERSION")
         ))
     );

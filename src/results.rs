@@ -1,7 +1,8 @@
 use crate::{
-    kartouche::{self, Outcome, Stream, Style},
-    ui::{Color, stderr_color, stdout_color},
+    kartouche::{self, Outcome, Style},
+    ui::{Color, stderr_color},
 };
+use std::io::{self, Write};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ResultKind {
@@ -36,12 +37,18 @@ impl ResultKind {
     }
 }
 
-pub(crate) fn print_results(title: &str, results: &[(String, ResultKind)]) {
-    println!("\n{}\n", result_summary(title, results));
+pub(crate) fn print_results(results: &[(String, ResultKind)]) {
+    let rows = result_items(results);
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(label, outcome)| (label.as_str(), *outcome))
+        .collect();
+    io::stdout().flush().expect("failed to flush host output");
+    kartouche::summary(Style::Rail, &items);
 }
 
-fn result_summary(title: &str, results: &[(String, ResultKind)]) -> String {
-    let rows: Vec<_> = results
+fn result_items(results: &[(String, ResultKind)]) -> Vec<(String, Outcome)> {
+    results
         .iter()
         .map(|(name, result)| {
             let outcome = match result {
@@ -52,22 +59,11 @@ fn result_summary(title: &str, results: &[(String, ResultKind)]) -> String {
                 ResultKind::Failed | ResultKind::Unknown => Outcome::Failed,
             };
             (
-                format!("{name}: {}", stdout_color(result.label(), result.color())),
+                format!("{name}: {}", stderr_color(result.label(), result.color())),
                 outcome,
             )
         })
-        .collect();
-    let items: Vec<_> = rows
-        .iter()
-        .map(|(label, outcome)| (label.as_str(), *outcome))
-        .collect();
-    kartouche::render_summary(
-        Style::Rail,
-        &format!("{title} results:"),
-        "",
-        &items,
-        Stream::Stdout,
-    )
+        .collect()
 }
 
 fn unreachable_warning(count: usize) -> String {
@@ -128,7 +124,18 @@ mod tests {
             ("failed".into(), ResultKind::Failed),
             ("unknown".into(), ResultKind::Unknown),
         ];
-        let rendered = result_summary("Read-only check", &outcomes);
+        let rows = result_items(&outcomes);
+        let items: Vec<_> = rows
+            .iter()
+            .map(|(label, outcome)| (label.as_str(), *outcome))
+            .collect();
+        let rendered = kartouche::render_summary(
+            Style::Rail,
+            "fleetty",
+            env!("CARGO_PKG_VERSION"),
+            &items,
+            kartouche::Stream::Stderr,
+        );
         // Tests can run from a terminal, where kartouche emits ANSI styles.
         let mut rail = String::new();
         let mut chars = rendered.chars().peekable();
@@ -151,7 +158,7 @@ mod tests {
             };
         assert_eq!(
             rail.lines().next(),
-            Some(format!("{header} Read-only check results:").as_str())
+            Some(format!("{header} fleetty  v{}", env!("CARGO_PKG_VERSION")).as_str())
         );
         assert_eq!(rail.lines().count(), outcomes.len() + 2);
         for line in [

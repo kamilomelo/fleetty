@@ -83,13 +83,12 @@ compromised.
 
 ## What each routine does
 
-Fleetty shows each dot step for two seconds before connecting to that account.
-From the repository, run `cargo run --offline --locked --` to use this default.
-The same local pause applies to every step (including the first and last) during
-checks, updates, shutdown preflight, and custom commands. It does not pause
-interactive pacman/AUR prompts. Shutdown requests are still dispatched together
-after preflight. To change the delay, set `FLEETTY_STEP_DELAY_SECONDS` to a
-whole number from 0 to 60; `0` disables it.
+Kartouche prints a banner and append-only host steps with a title and sequential
+counters. It adds blank lines around complete blocks and waits one second after
+each completed block on a terminal, not after each host step. No delay is added
+to interactive pacman/AUR prompts. Shutdown requests are still dispatched
+together after preflight. Set `PAUSE_SECONDS` in `src/kartouche.rs` to change the
+pause (`0` disables it); redirected output never pauses.
 
 1. **Check, then optionally update** runs read-only SSH checks for each
    selected account: hostname, clock (within two minutes of this computer),
@@ -130,6 +129,8 @@ whole number from 0 to 60; `0` disables it.
   verified, and `✗` means failed or unknown shutdown outcome. The label gives
   the exact status. The footer counts unreachable and unverified requests in
   kartouche's broader **skipped** category; they remain distinct in the labels.
+  The preceding step run ends with a non-success marker whenever any host needs
+  review, but that marker does not change the exit status described below.
 - Noninteractive SSH checks and shutdown requests have a 30-second deadline
   and a 16 KiB output limit per stream. Interactive updates and custom commands
   have no automatic deadline, since AUR builds and user commands may take a
@@ -161,9 +162,9 @@ whole number from 0 to 60; `0` disables it.
 - `src/ssh.rs` and `src/auth.rs` — SSH checks, credentials, and local askpass socket.
 - `src/update.rs`, `src/aur.rs`, and `src/results.rs` — updates, AUR choices, and outcomes.
 - `src/kartouche.rs` — locally copied [kartouche](https://github.com/kamilomelo/kartouche)
-  Rust template (MIT, [v3 source](https://github.com/kamilomelo/kartouche/blob/26c10e8bcffcde4af82d9e9bc7238d020ea11042/rust/kartouche.rs));
-  renders the gray banner, append-only dot steps (a line bar above 12 accounts),
-  and the results summary rail.
+  Rust template (MIT, [v4 source](https://github.com/kamilomelo/kartouche/blob/40cea4fe3cb120c0a084668c10c5cc6f0df0633b/rust/kartouche.rs));
+  prints the gray banner, append-only host steps, and results summary rail,
+  including its own spacing and terminal-only pause.
   Follow kartouche's
   [update guide](https://github.com/kamilomelo/kartouche/blob/main/UPDATING.md)
   when refreshing this local copy.

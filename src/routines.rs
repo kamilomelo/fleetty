@@ -2,16 +2,17 @@ use crate::{
     aur::Aur,
     auth::Auth,
     inventory::{Host, Inventory, build_hosts},
+    kartouche::{Steps, Style},
     results::{ResultKind, print_results, report_attention},
     ssh::{Credentials, boot_id, check_read_only, connect_account, prepare_sudo, shutdown, ssh},
     ui::{
-        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, host_step, menu,
-        select_hosts, stderr_color, stdout_color,
+        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, menu, select_hosts,
+        stderr_color, stdout_color,
     },
     update::{UpdateOutcome, update},
 };
 use std::{
-    env, fs, io,
+    fs, io,
     io::Write,
     path::Path,
     sync::Arc,
@@ -20,30 +21,30 @@ use std::{
 };
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(300);
-const STEP_DELAY_ENV: &str = "FLEETTY_STEP_DELAY_SECONDS";
-const DEFAULT_STEP_DELAY: Duration = Duration::from_secs(2);
 
-fn step_delay(value: Option<&str>) -> Result<Duration, String> {
-    let Some(value) = value else {
-        return Ok(DEFAULT_STEP_DELAY);
-    };
-    let seconds = value
-        .parse::<u8>()
-        .map_err(|_| format!("{STEP_DELAY_ENV} must be a whole number from 0 to 60"))?;
-    if seconds > 60 {
-        return Err(format!(
-            "{STEP_DELAY_ENV} must be a whole number from 0 to 60"
-        ));
-    }
-    Ok(Duration::from_secs(seconds.into()))
+fn start_host_steps(kind: &str, hosts: &[&Host]) -> Steps {
+    let labels: Vec<_> = hosts
+        .iter()
+        .map(|host| format!("{kind} {}", host.target()))
+        .collect();
+    let names: Vec<_> = labels.iter().map(String::as_str).collect();
+    io::stdout().flush().expect("failed to flush host output");
+    Steps::start(Style::Dots, &names)
 }
 
-fn show_host_step(kind: &str, index: usize, total: usize, target: &str, delay: Duration) {
-    println!("\n{}\n", host_step(kind, index, total, target));
-    if !delay.is_zero() {
-        io::stdout().flush().expect("failed to flush host step");
-        thread::sleep(delay);
+fn finish_host_steps(steps: &mut Steps, results: &[(String, ResultKind)]) {
+    io::stdout().flush().expect("failed to flush host output");
+    if hosts_completed_successfully(results) {
+        steps.done(None);
+    } else {
+        steps.fail(Some("review per-host results"));
     }
+}
+
+fn hosts_completed_successfully(results: &[(String, ResultKind)]) -> bool {
+    results
+        .iter()
+        .all(|(_, result)| matches!(result, ResultKind::Done | ResultKind::Unchanged))
 }
 
 pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
@@ -99,42 +100,33 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     if routine == 3 && !confirm("Send shutdown to ALL selected hosts? This is irreversible")? {
         return Ok(());
     }
-    let delay = step_delay(env::var(STEP_DELAY_ENV).ok().as_deref())?;
     let mut credentials = Credentials::prompt()?;
     if routine == 1 {
-        return check_then_optionally_update(&selected, &mut credentials, delay);
+        return check_then_optionally_update(&selected, &mut credentials);
     }
     let results = match routine {
-        2 => run_updates(&selected, &mut credentials, delay)?,
-        3 => run_shutdown(&selected, &mut credentials, delay)?,
-        4 => run_commands(
-            &selected,
-            command.as_deref().unwrap(),
-            &mut credentials,
-            delay,
-        ),
+        2 => run_updates(&selected, &mut credentials)?,
+        3 => run_shutdown(&selected, &mut credentials)?,
+        4 => run_commands(&selected, command.as_deref().unwrap(), &mut credentials),
         _ => unreachable!(),
     };
-    print_results("Run", &results);
+    print_results(&results);
     report_attention(&results)
 }
 
 fn run_shutdown(
     selected: &[&Host],
     credentials: &mut Credentials,
-    delay: Duration,
 ) -> Result<Vec<(String, ResultKind)>, String> {
     let mut results = Vec::new();
     // Preflight runs one host at a time; shutdown requests are dispatched together.
     let mut ready = Vec::new();
+    let mut steps = start_host_steps("shutdown preflight", selected);
     for (i, host) in selected.iter().enumerate() {
-        show_host_step(
-            "shutdown preflight",
-            i + 1,
-            selected.len(),
-            &host.target(),
-            delay,
-        );
+        if i > 0 {
+            io::stdout().flush().expect("failed to flush host output");
+            steps.next();
+        }
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 println!("Found {name} ({})", host.target());
@@ -186,6 +178,7 @@ fn run_shutdown(
             results.push((name, result));
         }
     }
+    finish_host_steps(&mut steps, &results);
     Ok(results)
 }
 
@@ -193,11 +186,14 @@ fn run_commands(
     selected: &[&Host],
     command: &str,
     credentials: &mut Credentials,
-    delay: Duration,
 ) -> Vec<(String, ResultKind)> {
     let mut results = Vec::new();
+    let mut steps = start_host_steps("command", selected);
     for (i, host) in selected.iter().enumerate() {
-        show_host_step("command", i + 1, selected.len(), &host.target(), delay);
+        if i > 0 {
+            io::stdout().flush().expect("failed to flush host output");
+            steps.next();
+        }
         let (label, result) = match connect_account(host, credentials) {
             Err(e) => {
                 eprintln!(
@@ -221,18 +217,22 @@ fn run_commands(
         };
         results.push((label, result));
     }
+    finish_host_steps(&mut steps, &results);
     results
 }
 
 fn check_then_optionally_update(
     selected: &[&Host],
     credentials: &mut Credentials,
-    delay: Duration,
 ) -> Result<(), String> {
     let mut checked = Vec::new();
     let mut ready = Vec::new();
+    let mut steps = start_host_steps("check", selected);
     for (i, host) in selected.iter().enumerate() {
-        show_host_step("check", i + 1, selected.len(), &host.target(), delay);
+        if i > 0 {
+            io::stdout().flush().expect("failed to flush host output");
+            steps.next();
+        }
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 let label = format!("{name} ({})", host.target());
@@ -268,7 +268,8 @@ fn check_then_optionally_update(
             }
         }
     }
-    print_results("Read-only check", &checked);
+    finish_host_steps(&mut steps, &checked);
+    print_results(&checked);
     if ready.is_empty() {
         println!(
             "{}",
@@ -298,8 +299,8 @@ fn check_then_optionally_update(
         .into_iter()
         .filter(|(_, result)| !matches!(result, ResultKind::Done))
         .collect();
-    results.extend(run_updates(&ready, credentials, delay)?);
-    print_results("Combined run", &results);
+    results.extend(run_updates(&ready, credentials)?);
+    print_results(&results);
     report_attention(&results)
 }
 
@@ -314,12 +315,15 @@ struct PendingReboot {
 fn run_updates(
     hosts: &[&Host],
     credentials: &mut Credentials,
-    delay: Duration,
 ) -> Result<Vec<(String, ResultKind)>, String> {
     let mut results = Vec::new();
     let mut pending = Vec::new();
+    let mut steps = start_host_steps("update", hosts);
     for (i, host) in hosts.iter().enumerate() {
-        show_host_step("update", i + 1, hosts.len(), &host.target(), delay);
+        if i > 0 {
+            io::stdout().flush().expect("failed to flush host output");
+            steps.next();
+        }
         let (label, outcome, auth) = match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 println!("Found {name} ({})", host.target());
@@ -406,6 +410,7 @@ fn run_updates(
             results[index].1 = result;
         }
     }
+    finish_host_steps(&mut steps, &results);
     Ok(results)
 }
 
@@ -458,12 +463,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn step_delay_defaults_to_two_seconds_and_is_configurable() {
-        assert_eq!(step_delay(None).unwrap(), Duration::from_secs(2));
-        assert_eq!(step_delay(Some("0")).unwrap(), Duration::ZERO);
-        assert_eq!(step_delay(Some("3")).unwrap(), Duration::from_secs(3));
-        for invalid in ["", "-1", "1.5", "61", "999999"] {
-            assert!(step_delay(Some(invalid)).is_err());
+    fn steps_do_not_finish_green_for_unverified_or_failed_hosts() {
+        let success = vec![
+            ("done".into(), ResultKind::Done),
+            ("unchanged".into(), ResultKind::Unchanged),
+        ];
+        assert!(hosts_completed_successfully(&success));
+        for status in [
+            ResultKind::Skipped,
+            ResultKind::Unreachable,
+            ResultKind::Requested,
+            ResultKind::Failed,
+            ResultKind::Unknown,
+        ] {
+            assert!(!hosts_completed_successfully(&[("host".into(), status)]));
         }
     }
 

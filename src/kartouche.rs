@@ -1,7 +1,7 @@
 // kartouche — copy this file into your project; https://github.com/kamilomelo/kartouche
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kamilo Melo
-// KARTOUCHE_TEMPLATE_VERSION: 3
+// KARTOUCHE_TEMPLATE_VERSION: 4
 #![allow(dead_code)]
 
 // kartouche:config begin
@@ -11,11 +11,12 @@ const DESCRIPTION: &str = "your fleet, one terminal";
 const ACCENT: &str = "38;5;244";
 const APPEND_ONLY: bool = true;
 const GLYPHS: &str = "auto";
+const PAUSE_SECONDS: f64 = 1.0;
 // kartouche:config end
 
-// kartouche:code begin v3
+// kartouche:code begin v4
 use std::io::{self, IsTerminal, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 pub enum Stream { Stdout, Stderr }
@@ -134,19 +135,27 @@ pub fn render_summary(style: Style, name: &str, version: &str, items: &[(&str, O
         paint(&g(symbol), role, stream), g("·"), g("·")));
     lines.join("\n")
 }
-pub fn summary(style: Style, items: &[(&str, Outcome)]) {
-    let text = render_summary(style, NAME, VERSION, items, Stream::Stderr);
-    if !text.is_empty() { let _ = writeln!(io::stderr(), "{text}"); }
+fn after_block() {
+    if PAUSE_SECONDS > 0.0 && terminal(Stream::Stderr) { std::thread::sleep(Duration::from_secs_f64(PAUSE_SECONDS)); }
+    let _ = writeln!(io::stderr());
 }
-pub fn banner(status: Option<&str>) { let _ = writeln!(io::stderr(), "{}", render_banner(NAME, VERSION, DESCRIPTION, status, Stream::Stderr)); }
-pub fn card() { let _ = writeln!(io::stderr(), "{}", render_card(NAME, VERSION, DESCRIPTION, Stream::Stderr)); }
+fn print_block(text: &str) {
+    if text.is_empty() { return; }
+    let _ = writeln!(io::stderr(), "\n{text}");
+    after_block();
+}
+pub fn summary(style: Style, items: &[(&str, Outcome)]) {
+    print_block(&render_summary(style, NAME, VERSION, items, Stream::Stderr));
+}
+pub fn banner(status: Option<&str>) { print_block(&render_banner(NAME, VERSION, DESCRIPTION, status, Stream::Stderr)); }
+pub fn card() { print_block(&render_card(NAME, VERSION, DESCRIPTION, Stream::Stderr)); }
 
 pub struct Steps { style: Style, labels: Vec<String>, n: usize, previous: usize, redraw: bool, finished: bool, started: Instant }
 impl Steps {
     pub fn start(style: Style, labels: &[&str]) -> Self {
         let mut s = Self { style, labels: labels.iter().map(|x| clean(x)).collect(), n: usize::from(!labels.is_empty()), previous: 0,
             redraw: terminal(Stream::Stderr) && !APPEND_ONLY, finished: false, started: Instant::now() };
-        let _ = writeln!(io::stderr(), "{}", render_title(NAME, VERSION, Stream::Stderr));
+        let _ = writeln!(io::stderr(), "\n{}", render_title(NAME, VERSION, Stream::Stderr));
         if s.n > 0 { s.show(None, false); }
         s
     }
@@ -170,12 +179,14 @@ impl Steps {
         if self.finished { return; } self.finished = true;
         let text = format!("done in {}", elapsed.map(clean).unwrap_or_else(|| format!("{:.1}s", self.started.elapsed().as_secs_f64())));
         self.show(Some(render_end(true, &text, Stream::Stderr)), true);
+        after_block();
     }
     pub fn fail(&mut self, reason: Option<&str>) {
         if self.finished { return; } self.finished = true;
         let mut text = if self.labels.is_empty() { "failed".into() } else { format!("failed at {}/{} {}", self.n, self.labels.len(), self.labels[self.n-1]) };
         if let Some(r) = reason.filter(|x| !x.is_empty()) { text.push_str(&format!(" · {}", clean(r))); }
         self.show(Some(render_end(false, &text, Stream::Stderr)), false);
+        after_block();
     }
 }
 impl Drop for Steps {
@@ -184,6 +195,7 @@ impl Drop for Steps {
             self.finished = true;
             let text = if self.labels.is_empty() { "interrupted".into() } else { format!("interrupted at {}/{} {}", self.n, self.labels.len(), self.labels[self.n-1]) };
             self.show(Some(render_end(false, &text, Stream::Stderr)), false);
+            after_block();
         }
     }
 }
