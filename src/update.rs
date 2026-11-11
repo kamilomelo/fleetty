@@ -58,6 +58,7 @@ enum UpdateAttempt {
     UpdateFailed,
     RebootFailed,
     RebootRequested,
+    RebootPending,
     NoChanges,
 }
 
@@ -122,7 +123,8 @@ fn forward_output<R: Read>(
     }
 }
 
-fn update_script(aur: Aur) -> String {
+fn update_script(aur: Aur, reboot: bool) -> String {
+    let finish = if reboot { "sudo reboot" } else { ":" };
     format!(
         "if sudo -n -v >/dev/null 2>&1; then printf '\\036FLEETTY_READY\\037'; \
          else stty -echo; \
@@ -137,8 +139,8 @@ fn update_script(aur: Aur) -> String {
           after=$(pacman -Q) || exit $?; \
            after=$(printf '%s\\n' \"$after\" | LC_ALL=C sort) || exit $?; \
            if [ \"$before\" = \"$after\" ]; then printf '\\036FLEETTY_UNCHANGED\\037'; exit 0; fi; \
-          printf '\\036FLEETTY_UPDATED\\037'; sudo reboot",
-        aur.stage()
+           printf '\\036FLEETTY_UPDATED\\037'; {finish}",
+        aur.stage(),
     )
 }
 
@@ -147,11 +149,12 @@ fn interactive_update(
     aur: Aur,
     auth: &Auth,
     sudo_auth: &Auth,
+    reboot: bool,
 ) -> Result<UpdateAttempt, String> {
     // The ready/need markers let us send the password only during initial sudo
     // authentication. Later output (including AUR builds) cannot request it.
-    // Interactive AUR prompts and reboot remain in this SSH terminal.
-    let remote = sized_interactive_command(&update_script(aur));
+    // Interactive AUR prompts and any permitted reboot remain in this SSH terminal.
+    let remote = sized_interactive_command(&update_script(aur, reboot));
     let _raw = auth::raw_mode()?;
     let mut child = ssh(host, &remote, true, auth)
         .stdin(Stdio::piped())
@@ -238,7 +241,9 @@ fn interactive_update(
             )
         );
         Ok(UpdateAttempt::UpdateFailed)
-    } else if status.success() || status.code() == Some(255) {
+    } else if !reboot && status.success() {
+        Ok(UpdateAttempt::RebootPending)
+    } else if reboot && (status.success() || status.code() == Some(255)) {
         Ok(UpdateAttempt::RebootRequested)
     } else {
         eprintln!(
@@ -252,7 +257,12 @@ fn interactive_update(
     }
 }
 
-pub(crate) fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<UpdateOutcome, String> {
+pub(crate) fn update(
+    host: &Host,
+    auth: &Auth,
+    sudo_auth: &Auth,
+    reboot: bool,
+) -> Result<UpdateOutcome, String> {
     loop {
         match preflight(host, auth) {
             Ok(()) => break,
@@ -314,8 +324,15 @@ pub(crate) fn update(host: &Host, auth: &Auth, sudo_auth: &Auth) -> Result<Updat
     let command = format!("sudo pacman -Syu && {}", aur.command());
     loop {
         println!("Running: {command}");
-        match interactive_update(host, aur, auth, sudo_auth) {
+        match interactive_update(host, aur, auth, sudo_auth, reboot) {
             Ok(UpdateAttempt::RebootRequested) => break,
+            Ok(UpdateAttempt::RebootPending) => {
+                println!(
+                    "{}: packages updated; reboot pending (personal machine).",
+                    host.target()
+                );
+                return Ok(UpdateOutcome::Complete(ResultKind::RebootPending));
+            }
             Ok(UpdateAttempt::NoChanges) => {
                 println!(
                     "{}",
@@ -462,9 +479,9 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_packages_never_trigger_reboot() {
+    fn personal_update_never_reboots_without_permission_even_when_changed() {
         use std::os::unix::fs::PermissionsExt;
-        for changed in [false, true] {
+        for (changed, reboot) in [(false, false), (false, true), (true, false), (true, true)] {
             let dir = tempfile::tempdir().unwrap();
             for (name, script) in [
                 (
@@ -482,7 +499,7 @@ mod tests {
             }
             let result = Command::new("sh")
                 .arg("-c")
-                .arg(update_script(Aur::None))
+                .arg(update_script(Aur::None, reboot))
                 .env(
                     "PATH",
                     format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),
@@ -508,7 +525,7 @@ mod tests {
                 result.stdout.windows(UPDATED.len()).any(|m| m == UPDATED),
                 changed
             );
-            assert_eq!(dir.path().join("reboot").exists(), changed);
+            assert_eq!(dir.path().join("reboot").exists(), changed && reboot);
         }
     }
 
@@ -536,7 +553,7 @@ mod tests {
         }
         let output = Command::new("sh")
             .arg("-c")
-            .arg(update_script(Aur::Paru))
+            .arg(update_script(Aur::Paru, true))
             .env(
                 "PATH",
                 format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),
@@ -587,7 +604,7 @@ mod tests {
         }
         let result = Command::new("sh")
             .arg("-c")
-            .arg(update_script(Aur::Paru))
+            .arg(update_script(Aur::Paru, true))
             .env(
                 "PATH",
                 format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),
@@ -646,7 +663,7 @@ mod tests {
         }
         let result = Command::new("sh")
             .arg("-c")
-            .arg(update_script(Aur::Paru))
+            .arg(update_script(Aur::Paru, true))
             .env(
                 "PATH",
                 format!("{}:{}", dir.path().display(), env::var("PATH").unwrap()),

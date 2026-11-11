@@ -33,6 +33,7 @@ pub(crate) struct Host {
     pub(crate) user: String,
     pub(crate) groups: Vec<String>,
     pub(crate) priority: bool,
+    pub(crate) personal: bool,
 }
 
 impl Host {
@@ -101,7 +102,10 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     let mut hosts: Vec<Host> = Vec::new();
     let mut by_target: HashMap<(IpAddr, String), usize> = HashMap::new();
     for (group, entries) in inventory {
-        if group.trim().is_empty() || matches!(group.as_str(), "_" | "-") || entries.is_empty() {
+        if group.trim().is_empty()
+            || matches!(group.as_str(), "_" | "-" | "*")
+            || entries.is_empty()
+        {
             return Err(format!("empty group name or group with no hosts: {group}"));
         }
         for (address, usernames) in entries {
@@ -133,6 +137,7 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
                         user: user.clone(),
                         groups: vec![group.clone()],
                         priority: false,
+                        personal: false,
                     });
                 }
             }
@@ -148,8 +153,19 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
         .filter(|host| host.groups.iter().any(|group| group.starts_with('_')))
         .map(|host| host.address.clone())
         .collect();
+    let personal_ips: HashSet<String> = hosts
+        .iter()
+        .filter(|host| host.groups.iter().any(|group| group.starts_with('*')))
+        .map(|host| host.address.clone())
+        .collect();
+    if let Some(ip) = priority_ips.intersection(&personal_ips).next() {
+        return Err(format!(
+            "{ip}: cannot be both priority (_) and personal (*)"
+        ));
+    }
     for host in &mut hosts {
         host.priority = priority_ips.contains(&host.address);
+        host.personal = personal_ips.contains(&host.address);
     }
     // Priority first, then numeric IP; accounts on the same IP retain their
     // inventory array order.
@@ -227,6 +243,27 @@ mod tests {
         );
         assert!(hosts[0].priority);
         assert!(!hosts[1].priority);
+    }
+
+    #[test]
+    fn personal_is_ip_wide_and_conflicts_with_priority_but_not_optional() {
+        let inventory: Inventory = toml::from_str(
+            "[\"*laptops\"]\n\"192.0.2.1\" = \"owner\"\n[-optional]\n\"192.0.2.1\" = \"admin\"",
+        )
+        .unwrap();
+        let hosts = build_hosts(&inventory).unwrap();
+        assert_eq!(hosts.len(), 2);
+        assert!(hosts.iter().all(|host| host.personal && !host.priority));
+        let conflicting: Inventory = toml::from_str(
+            "[\"*laptops\"]\n\"192.0.2.1\" = \"owner\"\n[_urgent]\n\"192.0.2.1\" = \"admin\"",
+        )
+        .unwrap();
+        assert!(
+            build_hosts(&conflicting)
+                .err()
+                .unwrap()
+                .contains("192.0.2.1: cannot be both priority (_) and personal (*)")
+        );
     }
 
     #[test]

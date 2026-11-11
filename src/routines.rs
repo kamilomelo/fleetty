@@ -12,6 +12,7 @@ use crate::{
     update::{UpdateOutcome, update},
 };
 use std::{
+    collections::HashSet,
     fs, io,
     io::Write,
     path::Path,
@@ -45,6 +46,54 @@ fn hosts_completed_successfully(results: &[(String, ResultKind)]) -> bool {
     results
         .iter()
         .all(|(_, result)| matches!(result, ResultKind::Done | ResultKind::Unchanged))
+}
+
+fn choose_personal_reboots(hosts: &[&Host]) -> Result<HashSet<String>, String> {
+    let personal: Vec<&Host> = hosts.iter().copied().filter(|host| host.personal).collect();
+    if personal.is_empty() {
+        return Ok(HashSet::new());
+    }
+    println!("Personal machines selected for update:");
+    for host in &personal {
+        println!("  {}", host.target());
+    }
+    println!("If packages change, which personal machines may reboot?:");
+    println!("  1. Do not reboot any personal machines (default/safest)");
+    println!("  2. Reboot all personal machines with package changes");
+    println!("  3. Choose personal machines individually");
+    let answer = ask("Choice [1]: ")?;
+    let choice = if answer.is_empty() {
+        1
+    } else {
+        answer.parse::<usize>().map_err(|_| "invalid selection")?
+    };
+    personal_reboot_selection(&personal, choice, |host| {
+        confirm(&format!(
+            "Allow reboot of {} if packages change",
+            host.target()
+        ))
+    })
+}
+
+fn personal_reboot_selection(
+    personal: &[&Host],
+    choice: usize,
+    mut allow: impl FnMut(&Host) -> Result<bool, String>,
+) -> Result<HashSet<String>, String> {
+    Ok(match choice {
+        1 => HashSet::new(),
+        2 => personal.iter().map(|host| host.address.clone()).collect(),
+        3 => {
+            let mut selected = HashSet::new();
+            for host in personal {
+                if allow(host)? {
+                    selected.insert(host.address.clone());
+                }
+            }
+            selected
+        }
+        _ => return Err("invalid selection".into()),
+    })
 }
 
 pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
@@ -316,6 +365,7 @@ fn run_updates(
     hosts: &[&Host],
     credentials: &mut Credentials,
 ) -> Result<Vec<(String, ResultKind)>, String> {
+    let personal_reboots = choose_personal_reboots(hosts)?;
     let mut results = Vec::new();
     let mut pending = Vec::new();
     let mut steps = start_host_steps("update", hosts);
@@ -328,7 +378,12 @@ fn run_updates(
             Ok((name, auth)) => {
                 println!("Found {name} ({})", host.target());
                 let outcome = match prepare_sudo(host, &auth, credentials) {
-                    Ok(sudo_auth) => update(host, &auth, &sudo_auth)?,
+                    Ok(sudo_auth) => update(
+                        host,
+                        &auth,
+                        &sudo_auth,
+                        !host.personal || personal_reboots.contains(&host.address),
+                    )?,
                     Err(err) => {
                         eprintln!(
                             "{}",
@@ -463,6 +518,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn personal_reboot_choices_only_allow_explicitly_selected_ips() {
+        let first = Host {
+            address: "192.0.2.1".into(),
+            user: "owner".into(),
+            groups: vec!["*laptops".into()],
+            priority: false,
+            personal: true,
+        };
+        let second = Host {
+            address: "192.0.2.2".into(),
+            ..first.clone()
+        };
+        let hosts = [&first, &second];
+        assert!(
+            personal_reboot_selection(&hosts, 1, |_| panic!("must not prompt"))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            personal_reboot_selection(&hosts, 2, |_| panic!("must not prompt"))
+                .unwrap()
+                .len(),
+            2
+        );
+        let selected =
+            personal_reboot_selection(&hosts, 3, |host| Ok(host.address == "192.0.2.2")).unwrap();
+        assert_eq!(selected, HashSet::from(["192.0.2.2".into()]));
+        assert!(personal_reboot_selection(&hosts, 4, |_| panic!("must not prompt")).is_err());
+    }
+
+    #[test]
     fn steps_do_not_finish_green_for_unverified_or_failed_hosts() {
         let success = vec![
             ("done".into(), ResultKind::Done),
@@ -470,6 +556,7 @@ mod tests {
         ];
         assert!(hosts_completed_successfully(&success));
         for status in [
+            ResultKind::RebootPending,
             ResultKind::Skipped,
             ResultKind::Unreachable,
             ResultKind::Requested,
@@ -487,6 +574,7 @@ mod tests {
             user: "admin".into(),
             groups: vec!["servers".into()],
             priority: false,
+            personal: false,
         };
         let requested = Instant::now() - REBOOT_TIMEOUT - Duration::from_secs(1);
         assert!(matches!(

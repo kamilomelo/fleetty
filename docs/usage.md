@@ -36,6 +36,14 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
   IP order. Other machines follow in numeric order. Priority applies to the
   entire IP, even when an account also belongs to a normal group. `[mgt]` alone
   is not special; use `[_mgt]` if you want priority behavior.
+- A group beginning with `*`, such as `["*laptops"]`, marks **personal**
+  machines. Before updating selected personal IPs, choose whether none, all,
+  or individually selected machines may reboot if packages change. Press Enter
+  to choose none. The marker applies to the entire IP, including accounts in
+  other groups. An IP cannot be both personal (`*`) and priority (`_`);
+  Fleetty rejects that inventory. `*` and `-` may be combined across groups:
+  excluded machines are not offered a reboot choice unless included in the run.
+  Checks and custom commands do not automatically reboot machines.
 - A group beginning with `-`, such as `[-optional]`, is omitted when you choose
   **all** unless you answer **Yes** to `Include excluded groups in all [y/N]`.
   The default **No** excludes the entire IP, even when another account on it
@@ -113,7 +121,10 @@ pause (`0` disables it); redirected output never pauses.
    reboot skips remaining updates. Normal machines proceed to the next update
    immediately, then their reboots are checked in parallel at the end. Even
    after five minutes, a machine reachable at final verification can still
-   be confirmed. Reboot verification does not check services or applications.
+   be confirmed. For personal machines where reboot was not allowed, packages
+   are updated but the machine stays on; results say **updated; reboot pending**
+   and warn that a manual reboot is still needed. Reboot verification does not
+   check services or applications.
 4. **Shutdown** confirms twice, checks connectivity and sudo, then dispatches
    `sudo shutdown -h now` to at most eight machines at a time. A successful
    command means the request was sent, **not** that power-off was verified.
@@ -126,7 +137,8 @@ pause (`0` disables it); redirected output never pauses.
 
 - Final results use kartouche's summary rail: `✓` means done (including no
   package changes), `○` means skipped, unreachable, or a shutdown request not
-  verified, and `✗` means failed or unknown shutdown outcome. The label gives
+  verified (also updated personal machines with a reboot pending), and `✗`
+  means failed or unknown shutdown outcome. The label gives
   the exact status. The footer counts unreachable and unverified requests in
   kartouche's broader **skipped** category; they remain distinct in the labels.
   The preceding step run ends with a non-success marker whenever any host needs

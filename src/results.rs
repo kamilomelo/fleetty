@@ -8,6 +8,7 @@ use std::io::{self, Write};
 pub(crate) enum ResultKind {
     Done,
     Unchanged,
+    RebootPending,
     Failed,
     Skipped,
     Unreachable,
@@ -20,6 +21,7 @@ impl ResultKind {
         match self {
             Self::Done => "done",
             Self::Unchanged => "up to date (no reboot)",
+            Self::RebootPending => "updated; reboot pending",
             Self::Failed => "failed",
             Self::Skipped => "skipped",
             Self::Unreachable => "unreachable",
@@ -31,7 +33,7 @@ impl ResultKind {
     fn color(self) -> Color {
         match self {
             Self::Done | Self::Unchanged => Color::Green,
-            Self::Skipped | Self::Requested => Color::Yellow,
+            Self::Skipped | Self::Requested | Self::RebootPending => Color::Yellow,
             Self::Failed | Self::Unreachable | Self::Unknown => Color::Red,
         }
     }
@@ -53,9 +55,10 @@ fn result_items(results: &[(String, ResultKind)]) -> Vec<(String, Outcome)> {
         .map(|(name, result)| {
             let outcome = match result {
                 ResultKind::Done | ResultKind::Unchanged => Outcome::Ok,
-                ResultKind::Skipped | ResultKind::Unreachable | ResultKind::Requested => {
-                    Outcome::Skipped
-                }
+                ResultKind::Skipped
+                | ResultKind::Unreachable
+                | ResultKind::Requested
+                | ResultKind::RebootPending => Outcome::Skipped,
                 ResultKind::Failed | ResultKind::Unknown => Outcome::Failed,
             };
             (
@@ -82,6 +85,10 @@ pub(crate) fn report_attention(results: &[(String, ResultKind)]) -> Result<(), S
         .iter()
         .filter(|(_, result)| matches!(result, ResultKind::Skipped))
         .count();
+    let pending = results
+        .iter()
+        .filter(|(_, result)| matches!(result, ResultKind::RebootPending))
+        .count();
     let failed = results
         .iter()
         .filter(|(_, result)| matches!(result, ResultKind::Failed | ResultKind::Unknown))
@@ -102,6 +109,15 @@ pub(crate) fn report_attention(results: &[(String, ResultKind)]) -> Result<(), S
             )
         );
     }
+    if pending > 0 {
+        eprintln!(
+            "{}",
+            stderr_color(
+                &format!("Warning: {pending} updated personal machine(s) still need a reboot."),
+                Color::Yellow
+            )
+        );
+    }
     if failed > 0 {
         return Err(format!(
             "{failed} host(s) failed or have an unknown outcome"
@@ -118,6 +134,7 @@ mod tests {
         let outcomes = vec![
             ("ok".into(), ResultKind::Done),
             ("unchanged".into(), ResultKind::Unchanged),
+            ("personal".into(), ResultKind::RebootPending),
             ("skipped".into(), ResultKind::Skipped),
             ("offline".into(), ResultKind::Unreachable),
             ("shutdown".into(), ResultKind::Requested),
@@ -164,12 +181,13 @@ mod tests {
         for line in [
             format!("{branch} {yes} ok: done"),
             format!("{branch} {yes} unchanged: up to date (no reboot)"),
+            format!("{branch} {pending} personal: updated; reboot pending"),
             format!("{branch} {pending} skipped: skipped"),
             format!("{branch} {pending} offline: unreachable"),
             format!("{branch} {pending} shutdown: request sent (not verified)"),
             format!("{branch} {no} failed: failed"),
             format!("{branch} {no} unknown: shutdown outcome unknown"),
-            format!("{tail} {no} 2 ok {dot} 2 failed {dot} 3 skipped"),
+            format!("{tail} {no} 2 ok {dot} 2 failed {dot} 4 skipped"),
         ] {
             assert!(
                 rail.lines().any(|actual| actual == line),
@@ -192,6 +210,8 @@ mod tests {
         assert!(report_attention(&failed).is_err());
         let skipped = vec![("pacman-only update declined".into(), ResultKind::Skipped)];
         assert!(report_attention(&skipped).is_ok());
+        let pending = vec![("updated".into(), ResultKind::RebootPending)];
+        assert!(report_attention(&pending).is_ok());
         let unknown = vec![("shutdown outcome unknown".into(), ResultKind::Unknown)];
         assert!(report_attention(&unknown).is_err());
     }

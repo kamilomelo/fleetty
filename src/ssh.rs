@@ -650,6 +650,7 @@ mod tests {
             user: "admin".into(),
             groups: vec![],
             priority: false,
+            personal: false,
         };
         let warning = "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nSHA256:example\nHost key verification failed.";
         let guidance = changed_host_key_guidance(Some(255), warning, &host);
@@ -681,6 +682,7 @@ mod tests {
             user: "admin".into(),
             groups: vec!["servers".into()],
             priority: false,
+            personal: false,
         };
         let deploy = Host {
             user: "deploy".into(),
@@ -738,6 +740,7 @@ mod tests {
             user: "deploy".into(),
             groups: vec!["servers".into()],
             priority: false,
+            personal: false,
         };
         let other = Host {
             user: "admin".into(),
@@ -791,6 +794,7 @@ mod tests {
             user: "admin".into(),
             groups: vec![],
             priority: false,
+            personal: false,
         };
         let mut credentials = Credentials {
             shared: Arc::new(Auth::for_test(b"shared")),
