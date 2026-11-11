@@ -273,6 +273,17 @@ fn authentication_failed(code: Option<i32>, stderr: &str) -> bool {
         && !stderr.contains("Permission denied (publickey).")
 }
 
+fn changed_host_key_guidance(code: Option<i32>, stderr: &str, host: &Host) -> String {
+    if code == Some(255) && stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
+        format!(
+            "\nVerify the presented host-key fingerprint against a trusted source (such as the host console or administrator). Do not accept it if you cannot verify it. Only if the change is expected, run `ssh-keygen -R {}` for this IP, then reconnect and verify the replacement key before accepting it. Do not clear keys for the whole inventory.",
+            host.address
+        )
+    } else {
+        String::new()
+    }
+}
+
 fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
     for attempt in 1..=CONNECTION_ATTEMPTS {
         // `hostname` is an optional package on some Arch installations.
@@ -313,14 +324,15 @@ fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
             return Err(ConnectError {
                 kind,
                 message: format!(
-                    "SSH check failed (exit {}, attempt {attempt}): {}{}",
+                    "SSH check failed (exit {}, attempt {attempt}): {}{}{}",
                     output.status,
                     stderr.trim(),
                     if stderr.contains("Permission denied (publickey).") {
                         "\nServer requires an SSH key; if it is encrypted, unlock it with ssh-add before starting Fleetty. An account password cannot replace the key."
                     } else {
                         ""
-                    }
+                    },
+                    changed_host_key_guidance(output.status.code(), &stderr, host)
                 ),
                 authentication_failed: authentication_failed(output.status.code(), &stderr),
             });
@@ -628,6 +640,32 @@ mod tests {
             (Some(1), "Permission denied"),
         ] {
             assert!(!authentication_failed(status, message));
+        }
+    }
+
+    #[test]
+    fn changed_host_key_guidance_is_specific_and_never_removes_keys() {
+        let host = Host {
+            address: "192.0.2.1".into(),
+            user: "admin".into(),
+            groups: vec![],
+            priority: false,
+        };
+        let warning = "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nSHA256:example\nHost key verification failed.";
+        let guidance = changed_host_key_guidance(Some(255), warning, &host);
+        assert!(guidance.contains("Verify the presented host-key fingerprint"));
+        assert!(guidance.contains("Only if the change is expected"));
+        assert!(guidance.contains("ssh-keygen -R 192.0.2.1"));
+        assert!(!guidance.contains("admin@"));
+        let (kind, retry) = classify_connection(Some(255), warning);
+        assert!(matches!(kind, ResultKind::Failed));
+        assert!(!retry);
+        for (code, message) in [
+            (Some(255), "Host key verification failed."),
+            (Some(255), "Connection refused"),
+            (Some(1), warning),
+        ] {
+            assert!(changed_host_key_guidance(code, message, &host).is_empty());
         }
     }
 
