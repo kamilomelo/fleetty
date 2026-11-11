@@ -36,13 +36,14 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
   IP order. Other machines follow in numeric order. Priority applies to the
   entire IP, even when an account also belongs to a normal group. `[mgt]` alone
   is not special; use `[_mgt]` if you want priority behavior.
-- A group beginning with `*`, such as `["*laptops"]`, marks **personal**
+- A group ending with `_`, such as `[laptops_]`, marks **personal**
   machines. Before updating selected personal IPs, choose whether none, all,
   or individually selected machines may reboot if packages change. Press Enter
   to choose none. The marker applies to the entire IP, including accounts in
-  other groups. An IP cannot be both personal (`*`) and priority (`_`);
-  Fleetty rejects that inventory. `*` and `-` may be combined across groups:
-  excluded machines are not offered a reboot choice unless included in the run.
+  other groups. An IP cannot be both personal (trailing `_`) and priority
+  (leading `_`); Fleetty rejects that inventory. Personal and optional (`-`)
+  may be combined across groups (or as `[-laptops_]`); excluded machines are
+  not offered a reboot choice unless included in the run.
   Checks and custom commands do not automatically reboot machines.
 - A group beginning with `-`, such as `[-optional]`, is omitted when you choose
   **all** unless you answer **Yes** to `Include excluded groups in all [y/N]`.
@@ -71,6 +72,16 @@ use `ssh-add ~/.ssh/id_vps` in the terminal where you will run Fleetty. If no
 agent is available, first run `eval "$(ssh-agent -s)"`. Fleetty cannot answer
 **key-passphrase** prompts; an account password cannot replace a key on a
 public-key-only server.
+
+Before requesting a password, Fleetty asks whether to trust the first SSH host
+key seen for the selected IPs **this run**. The default **No** keeps your usual
+SSH host-key checks and stops on a changed key. **Yes** uses a private, temporary
+known-hosts file for Fleetty's SSH connections, accepts the first key seen for
+each IP without checking it against your saved keys, and removes the temporary
+file afterward. It does not erase or update `~/.ssh/known_hosts`. Choose Yes
+only if you accept that a different or impersonating machine at an IP could
+receive your SSH password and commands. The choice applies to checks, updates,
+shutdowns, and custom commands; it is not saved for future runs.
 
 Fleetty always asks for a shared SSH/sudo password at the start of a run, even
 when SSH uses keys. You enter it twice; if the entries differ, Fleetty asks

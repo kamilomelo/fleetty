@@ -134,12 +134,12 @@ fn all_with_only_excluded_hosts_stops_before_contacting_anyone() {
 #[test]
 fn personal_priority_conflict_is_rejected_before_any_connections() {
     let output = run_with_inventory(
-        "[\"*laptops\"]\n\"192.0.2.1\" = \"owner\"\n[_urgent]\n\"192.0.2.1\" = \"admin\"",
+        "[laptops_]\n\"192.0.2.1\" = \"owner\"\n[_urgent]\n\"192.0.2.1\" = \"admin\"",
         "",
     );
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("cannot be both priority (_) and personal (*)")
+            .contains("cannot be both priority (_) and personal (trailing _)")
     );
 }

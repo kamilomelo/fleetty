@@ -14,8 +14,8 @@
 # "192.0.2.1" = "admin"
 
 # Personal machines: choose reboot policy before updates; default is no reboot.
-# Quote the group name because * is not a TOML bare-key character.
-# ["*laptops"]
+# A trailing underscore is the personal marker (no quotes needed).
+# [laptops_]
 # "192.0.2.20" = "kamilo"
 
 # Exclude these machines from "all" by default; this group appears last in the

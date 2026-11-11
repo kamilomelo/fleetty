@@ -30,15 +30,32 @@ pub(crate) struct Credentials {
     pub(crate) shared: Arc<Auth>,
     pub(crate) alternate: HashMap<String, Arc<Auth>>,
     pub(crate) sudo_alternate: HashMap<String, Arc<Auth>>,
+    // Retain the private host-key directory until all SSH work is complete.
+    host_keys: Option<tempfile::TempDir>,
 }
 
 impl Credentials {
-    pub(crate) fn prompt() -> Result<Self, String> {
+    pub(crate) fn prompt(trust_current_keys: bool) -> Result<Self, String> {
+        let host_keys = if trust_current_keys {
+            Some(tempfile::tempdir().map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let mut shared = Auth::prompt()?;
+        shared
+            .use_temporary_host_keys(host_keys.as_ref().map(|dir| dir.path().join("known_hosts")));
         Ok(Self {
-            shared: Arc::new(Auth::prompt()?),
+            shared: Arc::new(shared),
             alternate: HashMap::new(),
             sudo_alternate: HashMap::new(),
+            host_keys,
         })
+    }
+
+    fn host_keys_path(&self) -> Option<std::path::PathBuf> {
+        self.host_keys
+            .as_ref()
+            .map(|dir| dir.path().join("known_hosts"))
     }
 
     pub(crate) fn for_host(&self, host: &Host) -> Arc<Auth> {
@@ -72,6 +89,16 @@ pub(crate) fn ssh(host: &Host, remote: &str, interactive: bool, auth: &Auth) -> 
         "-o",
         "NumberOfPasswordPrompts=1",
     ]);
+    if let Some(path) = auth.temporary_host_keys() {
+        cmd.arg("-o")
+            .arg(format!("UserKnownHostsFile={}", path.display()))
+            .arg("-o")
+            .arg("GlobalKnownHostsFile=/dev/null")
+            .arg("-o")
+            .arg("StrictHostKeyChecking=accept-new")
+            .arg("-o")
+            .arg("UpdateHostKeys=no");
+    }
     if interactive {
         cmd.arg("-tt");
     } else {
@@ -353,6 +380,7 @@ pub(crate) fn connect_account(
     host: &Host,
     credentials: &mut Credentials,
 ) -> Result<(String, Arc<Auth>), ConnectError> {
+    let host_keys = credentials.host_keys_path();
     connect_account_with(host, credentials, connect, |host| {
         let prompt = format!(
             "SSH authentication failed for {}. Try a different password for this account",
@@ -365,7 +393,9 @@ pub(crate) fn connect_account(
             "SSH and sudo password for {} (this run only): ",
             host.target()
         );
-        Auth::prompt_with(&label).map(Some)
+        let mut auth = Auth::prompt_with(&label)?;
+        auth.use_temporary_host_keys(host_keys.clone());
+        Ok(Some(auth))
     })
 }
 
@@ -448,6 +478,7 @@ pub(crate) fn prepare_sudo(
     ssh_auth: &Arc<Auth>,
     credentials: &mut Credentials,
 ) -> Result<Arc<Auth>, String> {
+    let host_keys = credentials.host_keys_path();
     prepare_sudo_with(host, ssh_auth, credentials, check_sudo, |host| {
         let prompt = format!(
             "{} rejected the sudo password. Try a different sudo password for this account",
@@ -456,11 +487,12 @@ pub(crate) fn prepare_sudo(
         if !confirm(&prompt)? {
             return Ok(None);
         }
-        Auth::prompt_with(&format!(
+        let mut auth = Auth::prompt_with(&format!(
             "Sudo password for {} (this run only): ",
             host.target()
-        ))
-        .map(Some)
+        ))?;
+        auth.use_temporary_host_keys(host_keys.clone());
+        Ok(Some(auth))
     })
 }
 
@@ -583,6 +615,41 @@ mod tests {
     use std::{collections::HashMap, process::Command};
 
     #[test]
+    fn temporary_host_key_trust_is_explicit_and_does_not_edit_user_known_hosts() {
+        let host = Host {
+            address: "192.0.2.1".into(),
+            user: "admin".into(),
+            groups: vec![],
+            priority: false,
+            personal: false,
+        };
+        let mut auth = Auth::for_test(b"test-secret");
+        let args: Vec<_> = ssh(&host, "true", false, &auth)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(!args.iter().any(|arg| arg.contains("KnownHostsFile=")));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.contains("StrictHostKeyChecking="))
+        );
+
+        let private = tempfile::tempdir().unwrap();
+        let file = private.path().join("known_hosts");
+        auth.use_temporary_host_keys(Some(file.clone()));
+        let args: Vec<_> = ssh(&host, "true", false, &auth)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&format!("UserKnownHostsFile={}", file.display())));
+        assert!(args.contains(&"GlobalKnownHostsFile=/dev/null".to_string()));
+        assert!(args.contains(&"StrictHostKeyChecking=accept-new".to_string()));
+        assert!(args.contains(&"UpdateHostKeys=no".to_string()));
+        assert!(!file.exists()); // No keys are enrolled until an SSH connection is made.
+    }
+
+    #[test]
     fn interactive_terminal_size_is_set_before_remote_work() {
         let remote = with_terminal_size("printf ready", Some((42, 132)));
         assert_eq!(
@@ -676,6 +743,7 @@ mod tests {
             shared: Arc::new(Auth::for_test(b"shared")),
             alternate: HashMap::new(),
             sudo_alternate: HashMap::new(),
+            host_keys: None,
         };
         let admin = Host {
             address: "192.0.2.1".into(),
@@ -734,6 +802,7 @@ mod tests {
             shared: Arc::new(Auth::for_test(b"shared")),
             alternate: HashMap::new(),
             sudo_alternate: HashMap::new(),
+            host_keys: None,
         };
         let host = Host {
             address: "192.0.2.1".into(),
@@ -800,6 +869,7 @@ mod tests {
             shared: Arc::new(Auth::for_test(b"shared")),
             alternate: HashMap::new(),
             sudo_alternate: HashMap::new(),
+            host_keys: None,
         };
         let ssh_auth = Arc::clone(&credentials.shared);
         let result = prepare_sudo_with(

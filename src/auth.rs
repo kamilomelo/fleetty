@@ -98,6 +98,7 @@ pub struct Auth {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     executable: PathBuf,
+    host_keys: Option<PathBuf>,
 }
 
 impl Auth {
@@ -160,6 +161,7 @@ impl Auth {
             stop,
             worker: Some(worker),
             executable,
+            host_keys: None,
         })
     }
 
@@ -169,6 +171,14 @@ impl Auth {
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("DISPLAY", "fleetty")
             .env("FLEETTY_ASKPASS_SOCKET", &self.path);
+    }
+
+    pub fn use_temporary_host_keys(&mut self, path: Option<PathBuf>) {
+        self.host_keys = path;
+    }
+
+    pub fn temporary_host_keys(&self) -> Option<&std::path::Path> {
+        self.host_keys.as_deref()
     }
 
     pub fn password(&self) -> &[u8] {

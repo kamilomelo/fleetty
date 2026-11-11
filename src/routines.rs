@@ -149,7 +149,10 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     if routine == 3 && !confirm("Send shutdown to ALL selected hosts? This is irreversible")? {
         return Ok(());
     }
-    let mut credentials = Credentials::prompt()?;
+    let trust_current_keys = confirm(
+        "Trust the first SSH host key seen for selected IPs this run (ignores saved keys; weaker identity protection)",
+    )?;
+    let mut credentials = Credentials::prompt(trust_current_keys)?;
     if routine == 1 {
         return check_then_optionally_update(&selected, &mut credentials);
     }
@@ -522,7 +525,7 @@ mod tests {
         let first = Host {
             address: "192.0.2.1".into(),
             user: "owner".into(),
-            groups: vec!["*laptops".into()],
+            groups: vec!["laptops_".into()],
             priority: false,
             personal: true,
         };
