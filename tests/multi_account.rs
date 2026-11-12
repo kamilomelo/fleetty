@@ -17,6 +17,8 @@ fn run_with_inventory(inventory_text: &str, choices: &str) -> std::process::Outp
         .join("fleetty");
     let mut child = Command::new(binary)
         .arg(inventory)
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -41,9 +43,10 @@ fn run_with_choices(choices: &str) -> String {
 }
 
 #[test]
-fn update_and_shutdown_choose_exactly_one_account() {
-    for routine in [2, 3] {
+fn update_reboot_and_shutdown_choose_exactly_one_account() {
+    for routine in [2, 3, 4] {
         let output = run_with_choices(&format!("1\n{routine}\n2\nn\n"));
+        assert!(output.contains("├─ 2. Update (interactive)\n├─ 3. Reboot (parallel, verify)\n├─ 4. Shutdown (parallel)\n├─ 5. Run command (sequential)"), "{output}");
         assert!(output.contains("Choose ONE account"), "{output}");
         assert!(output.contains("Selected: deploy@192.0.2.1"), "{output}");
         assert!(!output.contains("Selected: admin@192.0.2.1"), "{output}");
@@ -51,8 +54,17 @@ fn update_and_shutdown_choose_exactly_one_account() {
 }
 
 #[test]
+fn declining_reboot_confirmation_stops_before_any_ssh() {
+    let output = run_with_inventory("[servers]\n\"192.0.2.1\" = \"admin\"\n", "1\n3\ny\nn\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Reboot ALL selected hosts now (interrupts running work) [y/N]"));
+    assert!(!text.contains("Trust the first SSH host key"));
+}
+
+#[test]
 fn checks_and_custom_commands_can_choose_one_or_all_accounts() {
-    for routine in [1, 4] {
+    for routine in [1, 5] {
         let output = run_with_choices(&format!("1\n{routine}\n1\nn\n"));
         assert!(!output.contains("Choose ONE account"), "{output}");
         assert!(
@@ -80,13 +92,13 @@ fn all_excludes_marked_machines_unless_explicitly_included() {
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
-        text.contains("Include excluded groups in all [y/N]"),
+        text.contains("╭─ ● Include excluded groups in all\n╰─❯ [y/N]:"),
         "{text}"
     );
     assert!(text.contains("Selected: admin@192.0.2.1"), "{text}");
     assert!(!text.contains("Selected: admin@192.0.2.1,"), "{text}");
     assert!(
-        text.contains("  2. group: servers\n  3. individual hosts\n  4. group: -optional"),
+        text.contains("├─ 2. group: servers\n├─ 3. group: -optional\n├─ 4. individual hosts"),
         "{text}"
     );
 
@@ -102,26 +114,30 @@ fn all_excludes_marked_machines_unless_explicitly_included() {
     );
 
     // Explicit group and individual selections do not get the exclusion prompt.
-    let output = run_with_inventory(inventory, "4\n1\nn\n");
+    let output = run_with_inventory(inventory, "3\n1\nn\n");
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
         text.contains("Selected: deploy@192.0.2.2, admin@192.0.2.3"),
         "{text}"
     );
-    assert!(
-        !text.contains("Include excluded groups in all [y/N]"),
-        "{text}"
-    );
+    assert!(!text.contains("Include excluded groups in all"), "{text}");
 
-    let output = run_with_inventory(inventory, "3\n4\n1\nn\n");
+    let output = run_with_inventory(inventory, "4\n4\n1\nn\n");
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("Selected: admin@192.0.2.3"), "{text}");
-    assert!(
-        !text.contains("Include excluded groups in all [y/N]"),
-        "{text}"
-    );
+    assert!(!text.contains("Include excluded groups in all"), "{text}");
+}
+
+#[test]
+fn all_stays_first_and_individual_stays_last_as_groups_are_added() {
+    let inventory = "[_mgt]\n\"192.0.2.1\" = \"admin\"\n[servers]\n\"192.0.2.2\" = \"admin\"\n[vps]\n\"192.0.2.3\" = \"admin\"\n[-pc_]\n\"192.0.2.4\" = \"admin\"\n[-vpn]\n\"192.0.2.5\" = \"admin\"";
+    let output = run_with_inventory(inventory, "6\n1\nn\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("╭─ ● Select hosts\n├─ 1. all\n├─ 2. group: _mgt\n├─ 3. group: servers\n├─ 4. group: vps\n├─ 5. group: -pc_\n├─ 6. group: -vpn\n├─ 7. individual hosts\n╰─❯ Choice:"), "{text}");
+    assert!(text.contains("Selected: admin@192.0.2.5"), "{text}");
 }
 
 #[test]

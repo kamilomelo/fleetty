@@ -1,4 +1,7 @@
-use crate::inventory::Host;
+use crate::{
+    inventory::Host,
+    kartouche::{self, Stream},
+};
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -42,6 +45,40 @@ pub(crate) fn stderr_color(text: &str, color: Color) -> String {
     colorize(text, color, colors_enabled() && io::stderr().is_terminal())
 }
 
+fn menu_marks() -> (&'static str, &'static str) {
+    if matches!(env::var("TERM").as_deref(), Ok("linux" | "dumb")) {
+        ("|-", "`->")
+    } else {
+        ("├─", "╰─❯")
+    }
+}
+
+fn menu_title(title: &str) {
+    println!("\n{}", kartouche::render_title(title, "", Stream::Stdout));
+}
+
+fn menu_option(number: usize, label: &str) {
+    println!("{} {number}. {label}", menu_marks().0);
+}
+
+fn menu_choice(prompt: &str) -> Result<String, String> {
+    ask(&format!("{} {prompt}: ", menu_marks().1))
+}
+
+pub(crate) fn pretty_menu(title: &str, options: &[&str]) -> Result<usize, String> {
+    menu_title(title);
+    for (i, option) in options.iter().enumerate() {
+        menu_option(i + 1, option);
+    }
+    let input = menu_choice("Choice")?;
+    parse_menu_choice(&input, options.len())
+}
+
+fn pretty_confirm(prompt: &str) -> Result<bool, String> {
+    menu_title(prompt);
+    Ok(menu_choice("[y/N]")?.eq_ignore_ascii_case("y"))
+}
+
 pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
     let mut groups: Vec<&str> = hosts
         .iter()
@@ -53,18 +90,14 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
             .then_with(|| a.cmp(b))
     });
     groups.dedup();
-    let regular_count = groups.partition_point(|group| !group.starts_with('-'));
-    let individual_option = regular_count + 2;
-    println!("Select hosts:");
-    println!("  1. all");
-    for (i, group) in groups[..regular_count].iter().enumerate() {
-        println!("  {}. group: {group}", i + 2);
+    let individual_option = groups.len() + 2;
+    menu_title("Select hosts");
+    menu_option(1, "all");
+    for (i, group) in groups.iter().enumerate() {
+        menu_option(i + 2, &format!("group: {group}"));
     }
-    println!("  {individual_option}. individual hosts");
-    for (i, group) in groups[regular_count..].iter().enumerate() {
-        println!("  {}. group: {group}", individual_option + i + 1);
-    }
-    let answer = ask("Choice: ")?;
+    menu_option(individual_option, "individual hosts");
+    let answer = menu_choice("Choice")?;
     let choice: usize = answer.trim().parse().map_err(|_| "invalid selection")?;
     let selected: Vec<&Host> = if choice == 1 {
         let excluded_ips: HashSet<&str> = hosts
@@ -72,7 +105,7 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
             .filter(|host| host.groups.iter().any(|group| group.starts_with('-')))
             .map(|host| host.address.as_str())
             .collect();
-        if !excluded_ips.is_empty() && !confirm("Include excluded groups in all")? {
+        if !excluded_ips.is_empty() && !pretty_confirm("Include excluded groups in all")? {
             hosts
                 .iter()
                 .filter(|host| !excluded_ips.contains(host.address.as_str()))
@@ -81,10 +114,11 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
             hosts.iter().collect()
         }
     } else if choice == individual_option {
+        menu_title("Individual hosts");
         for (i, host) in hosts.iter().enumerate() {
-            println!("  {}. {}", i + 1, host.target());
+            menu_option(i + 1, &host.target());
         }
-        let input = ask("Host numbers (comma-separated): ")?;
+        let input = menu_choice("Host numbers (comma-separated)")?;
         let mut indices = HashSet::new();
         for part in input.split(',') {
             let n: usize = part.trim().parse().map_err(|_| "invalid host number")?;
@@ -99,15 +133,10 @@ pub(crate) fn select_hosts(hosts: &[Host]) -> Result<Vec<&Host>, String> {
             .filter(|(i, _)| indices.contains(i))
             .map(|(_, h)| h)
             .collect()
-    } else if (2..=groups.len() + 2).contains(&choice) {
-        let index = if choice < individual_option {
-            choice - 2
-        } else {
-            choice - 3
-        };
+    } else if (2..individual_option).contains(&choice) {
         hosts
             .iter()
-            .filter(|h| h.groups.iter().any(|g| g == groups[index]))
+            .filter(|h| h.groups.iter().any(|g| g == groups[choice - 2]))
             .collect()
     } else {
         return Err("invalid selection".into());
@@ -202,8 +231,12 @@ pub(crate) fn menu(title: &str, options: &[&str]) -> Result<usize, String> {
         println!("  {}. {option}", i + 1);
     }
     let input = ask("Choice: ")?;
+    parse_menu_choice(&input, options.len())
+}
+
+fn parse_menu_choice(input: &str, count: usize) -> Result<usize, String> {
     let n: usize = input.trim().parse().map_err(|_| "invalid selection")?;
-    if n == 0 || n > options.len() {
+    if n == 0 || n > count {
         return Err("invalid selection".into());
     }
     Ok(n)

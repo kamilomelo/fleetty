@@ -1,7 +1,7 @@
 # Using Fleetty
 
 Fleetty is interactive and Linux/Unix-terminal oriented. It runs OpenSSH locally;
-remote machines need SSH, Arch Linux, `pacman`, and (for updates or shutdowns)
+remote machines need SSH, Arch Linux, `pacman`, and (for updates, reboots, or shutdowns)
 working `sudo`. An AUR helper is optional. It manages only IPs in your inventory.
 
 ## Inventory and selection
@@ -30,7 +30,7 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 - Choose all, a group, or individual accounts. The same IP/username in several
   groups is visited once. Before entering the shared password, choose one or
   all accounts for each IP with multiple usernames when checking or running
-  commands. Updates and shutdowns require exactly one account per IP. A check
+  commands. Updates, reboots, and shutdowns require exactly one account per IP. A check
   of both accounts may ask again which passing account to use for an update.
 - A group beginning with `_` is **priority**: its machines run first, in numeric
   IP order. Other machines follow in numeric order. Priority applies to the
@@ -49,8 +49,9 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
   **all** unless you answer **Yes** to `Include excluded groups in all [y/N]`.
   The default **No** excludes the entire IP, even when another account on it
   belongs to a normal group. Selecting a group or an individual host explicitly
-  still includes it. These groups appear after **individual hosts**, at the end
-  of the selection menu. Use `-` rather than `~` because TOML accepts
+  still includes it. These groups appear after regular groups, before
+  **individual hosts** (always last); **all** is always first. Use `-` rather
+  than `~` because TOML accepts
   `[-optional]` without quotes; `~` would require `["~optional"]`.
 - Do not put passwords, private keys, or key paths in the inventory.
 
@@ -81,14 +82,14 @@ each IP without checking it against your saved keys, and removes the temporary
 file afterward. It does not erase or update `~/.ssh/known_hosts`. Choose Yes
 only if you accept that a different or impersonating machine at an IP could
 receive your SSH password and commands. The choice applies to checks, updates,
-shutdowns, and custom commands; it is not saved for future runs.
+reboots, shutdowns, and custom commands; it is not saved for future runs.
 
 Fleetty always asks for a shared SSH/sudo password at the start of a run, even
 when SSH uses keys. You enter it twice; if the entries differ, Fleetty asks
 again before connecting to any hosts. This catches mistypes, not a password
 entered incorrectly both times. If SSH rejects it and the server permits
 password login, Fleetty offers one alternate password for that account. Before an update or
-shutdown, it checks sudo: it first tries that account's SSH credential and
+reboot or shutdown, it checks sudo: it first tries that account's SSH credential and
 offers one separate sudo password if rejected. Passwordless sudo also works.
 The check resets sudo's cached authentication, so sudo may ask again during a
 long update or AUR installation.
@@ -105,7 +106,7 @@ compromised.
 Kartouche prints a banner and append-only host steps with a title and sequential
 counters. It adds blank lines around complete blocks and waits one second after
 each completed block on a terminal, not after each host step. No delay is added
-to interactive pacman/AUR prompts. Shutdown requests are still dispatched
+to interactive pacman/AUR prompts. Reboot and shutdown requests are still dispatched
 together after preflight. Set `PAUSE_SECONDS` in `src/kartouche.rs` to change the
 pause (`0` disables it); redirected output never pauses.
 
@@ -136,11 +137,18 @@ pause (`0` disables it); redirected output never pauses.
    are updated but the machine stays on; results say **updated; reboot pending**
    and warn that a manual reboot is still needed. Reboot verification does not
    check services or applications.
-4. **Shutdown** confirms twice, checks connectivity and sudo, then dispatches
+4. **Reboot** confirms twice, checks connectivity and sudo, records each boot ID,
+   then sends `sudo reboot` requests to at most eight machines at a time. It
+   verifies a different boot ID and working SSH within five minutes per machine;
+   a request that disconnects SSH is not counted as success until verified.
+   An unconfirmed reboot is a failure. Personal-machine update reboot choices
+   do not restrict this separate, explicitly confirmed routine. Priority
+   ordering does not make reboot requests sequential.
+5. **Shutdown** confirms twice, checks connectivity and sudo, then dispatches
    `sudo shutdown -h now` to at most eight machines at a time. A successful
    command means the request was sent, **not** that power-off was verified.
    Priority ordering does not make shutdown sequential.
-5. **Run command** executes the entered shell command sequentially on each
+6. **Run command** executes the entered shell command sequentially on each
    selected account, as its SSH user. It does not elevate with sudo for you;
    use only commands you trust.
 
@@ -154,7 +162,7 @@ pause (`0` disables it); redirected output never pauses.
   kartouche's broader **skipped** category; they remain distinct in the labels.
   The preceding step run ends with a non-success marker whenever any host needs
   review, but that marker does not change the exit status described below.
-- Noninteractive SSH checks and shutdown requests have a 30-second deadline
+- Noninteractive SSH checks, reboot requests, and shutdown requests have a 30-second deadline
   and a 16 KiB output limit per stream. Interactive updates and custom commands
   have no automatic deadline, since AUR builds and user commands may take a
   long time; they still require supervision.

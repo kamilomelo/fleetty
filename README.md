@@ -36,10 +36,11 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 ```
 
 Fleetty sorts by numeric IP. Before the password prompt, choose **one account
-per IP** for updates and shutdowns; checks and commands let you choose one or
+per IP** for updates, reboots, and shutdowns; checks and commands let you choose one or
 all accounts per IP. The `_` prefix marks a priority group; `-` (for example,
 `[-optional]`) excludes its machines from **all** unless you opt in. `-` groups
-appear last in the host-selection menu, after **individual hosts**. See the
+appear after other groups, before **individual hosts** (which is always last).
+**All** is always first. See the
 [inventory and run guide](docs/usage.md).
 
 ## Routines
@@ -49,6 +50,8 @@ appear last in the host-selection menu, after **individual hosts**. See the
 - **Update:** Run pacman and an available AUR helper interactively; reboot only
   if installed packages change. Confirm priority reboots immediately and other
   reboots after the updates finish.
+- **Reboot:** Confirm twice, send concurrent reboot requests, then verify each
+  machine's boot ID changed and SSH returned.
 - **Shutdown:** Confirm twice, then send concurrent shutdown requests.
 - **Run command:** Execute your command as the SSH user on selected accounts.
 

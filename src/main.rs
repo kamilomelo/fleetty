@@ -13,7 +13,7 @@ mod update;
 use crate::{
     inventory::{default_inventory_path, edit_inventory},
     routines::run_inventory,
-    ui::{Color, menu, stderr_color},
+    ui::{Color, pretty_menu, stderr_color},
 };
 use std::{env, path::Path};
 
@@ -46,7 +46,7 @@ fn run() -> Result<(), String> {
     let path = default_inventory_path()?;
     loop {
         println!("Inventory: {}", path.display());
-        match menu("Fleetty", &["Run routines", "Edit inventory", "Exit"])? {
+        match pretty_menu("Fleetty", &["Run routines", "Edit inventory", "Exit"])? {
             1 => return run_inventory(&path),
             2 => edit_inventory(&path)?,
             3 => return Ok(()),

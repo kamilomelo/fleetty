@@ -278,6 +278,14 @@ pub(crate) fn shutdown(host: &Host, auth: &Auth, sudo_auth: &Auth) -> io::Result
     .map(|output| output.status)
 }
 
+pub(crate) fn reboot(host: &Host, auth: &Auth, sudo_auth: &Auth) -> io::Result<ExitStatus> {
+    bounded_output(
+        ssh(host, "sudo -S -p '' reboot", false, auth),
+        Some(sudo_auth.password()),
+    )
+    .map(|output| output.status)
+}
+
 fn classify_connection(code: Option<i32>, stderr: &str) -> (ResultKind, bool) {
     if code != Some(255) {
         // SSH reached the remote shell; its command failed. Retrying won't help.

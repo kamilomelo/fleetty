@@ -4,10 +4,12 @@ use crate::{
     inventory::{Host, Inventory, build_hosts},
     kartouche::{Steps, Style},
     results::{ResultKind, print_results, report_attention},
-    ssh::{Credentials, boot_id, check_read_only, connect_account, prepare_sudo, shutdown, ssh},
+    ssh::{
+        Credentials, boot_id, check_read_only, connect_account, prepare_sudo, reboot, shutdown, ssh,
+    },
     ui::{
-        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, menu, select_hosts,
-        stderr_color, stdout_color,
+        Color, ask, choose_action_accounts, choose_optional_accounts, confirm, pretty_menu,
+        select_hosts, stderr_color, stdout_color,
     },
     update::{UpdateOutcome, update},
 };
@@ -106,20 +108,26 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     let inventory: Inventory = toml::from_str(&text).map_err(|e| e.to_string())?;
     let hosts = build_hosts(&inventory)?;
     let selected = select_hosts(&hosts)?;
-    let routine = menu(
+    let routine = pretty_menu(
         "Routine",
         &[
             "Check all selected hosts (read-only), then optionally update",
             "Update (interactive)",
+            "Reboot (parallel, verify)",
             "Shutdown (parallel)",
             "Run command (sequential)",
         ],
     )?;
     let selected = match routine {
-        2 | 3 => {
-            choose_action_accounts(&selected, if routine == 2 { "update" } else { "shut down" })?
-        }
-        1 | 4 => choose_optional_accounts(&selected)?,
+        2..=4 => choose_action_accounts(
+            &selected,
+            match routine {
+                2 => "update",
+                3 => "reboot",
+                _ => "shut down",
+            },
+        )?,
+        1 | 5 => choose_optional_accounts(&selected)?,
         _ => unreachable!(),
     };
     println!(
@@ -133,7 +141,7 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     if !confirm("Proceed")? {
         return Ok(());
     }
-    let command = if routine == 4 {
+    let command = if routine == 5 {
         let input = ask("Remote command (runs as SSH user): ")?;
         if input.trim().is_empty() {
             return Err("empty command".into());
@@ -146,7 +154,10 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     } else {
         None
     };
-    if routine == 3 && !confirm("Send shutdown to ALL selected hosts? This is irreversible")? {
+    if routine == 3 && !confirm("Reboot ALL selected hosts now (interrupts running work)")? {
+        return Ok(());
+    }
+    if routine == 4 && !confirm("Send shutdown to ALL selected hosts? This is irreversible")? {
         return Ok(());
     }
     let trust_current_keys = confirm(
@@ -158,12 +169,106 @@ pub(crate) fn run_inventory(path: &Path) -> Result<(), String> {
     }
     let results = match routine {
         2 => run_updates(&selected, &mut credentials)?,
-        3 => run_shutdown(&selected, &mut credentials)?,
-        4 => run_commands(&selected, command.as_deref().unwrap(), &mut credentials),
+        3 => run_reboot(&selected, &mut credentials)?,
+        4 => run_shutdown(&selected, &mut credentials)?,
+        5 => run_commands(&selected, command.as_deref().unwrap(), &mut credentials),
         _ => unreachable!(),
     };
     print_results(&results);
     report_attention(&results)
+}
+
+fn reboot_may_have_started(status: &io::Result<std::process::ExitStatus>) -> bool {
+    match status {
+        Ok(status) => status.success() || status.code() == Some(255),
+        Err(err) => err.kind() == io::ErrorKind::TimedOut,
+    }
+}
+
+fn run_reboot(
+    selected: &[&Host],
+    credentials: &mut Credentials,
+) -> Result<Vec<(String, ResultKind)>, String> {
+    let mut results = Vec::new();
+    let mut ready = Vec::new();
+    let mut steps = start_host_steps("reboot preflight", selected);
+    for (i, host) in selected.iter().enumerate() {
+        if i > 0 {
+            io::stdout().flush().expect("failed to flush host output");
+            steps.next();
+        }
+        match connect_account(host, credentials) {
+            Ok((name, auth)) => {
+                println!("Found {name} ({})", host.target());
+                match prepare_sudo(host, &auth, credentials)
+                    .and_then(|sudo_auth| boot_id(host, &auth).map(|before| (sudo_auth, before)))
+                {
+                    Ok((sudo_auth, before)) => {
+                        ready.push(((*host).clone(), name, auth, sudo_auth, before));
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "{}",
+                            stderr_color(&format!("{}: {err}", host.target()), Color::Red)
+                        );
+                        results.push((host.target(), ResultKind::Failed));
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!(
+                    "{}",
+                    stderr_color(&format!("{}: {err}", host.target()), Color::Red)
+                );
+                results.push((host.target(), err.kind));
+            }
+        }
+    }
+    println!(
+        "Sending reboot requests to {} reachable host(s).",
+        ready.len()
+    );
+    let mut pending = Vec::new();
+    for batch in ready.chunks(8) {
+        let handles: Vec<_> = batch
+            .iter()
+            .cloned()
+            .map(|(host, name, auth, sudo_auth, before)| {
+                thread::spawn(move || {
+                    let requested = Instant::now();
+                    let status = reboot(&host, &auth, &sudo_auth);
+                    (host, name, auth, before, requested, status)
+                })
+            })
+            .collect();
+        for handle in handles {
+            let (host, name, auth, before, requested, status) =
+                handle.join().map_err(|_| "reboot worker panicked")?;
+            let label = format!("{name} ({})", host.target());
+            if reboot_may_have_started(&status) {
+                pending.push(PendingReboot {
+                    result_index: results.len(),
+                    host,
+                    auth,
+                    before,
+                    requested,
+                });
+                results.push((label, ResultKind::Unknown)); // Replaced after verification.
+            } else {
+                eprintln!(
+                    "{}",
+                    stderr_color(
+                        &format!("{label}: reboot request failed: {status:?}"),
+                        Color::Red
+                    )
+                );
+                results.push((label, ResultKind::Failed));
+            }
+        }
+    }
+    verify_pending_reboots(&pending, &mut results)?;
+    finish_host_steps(&mut steps, &results);
+    Ok(results)
 }
 
 fn run_shutdown(
@@ -446,6 +551,15 @@ fn run_updates(
             }
         }
     }
+    verify_pending_reboots(&pending, &mut results)?;
+    finish_host_steps(&mut steps, &results);
+    Ok(results)
+}
+
+fn verify_pending_reboots(
+    pending: &[PendingReboot],
+    results: &mut [(String, ResultKind)],
+) -> Result<(), String> {
     if !pending.is_empty() {
         println!("\nVerifying {} reboot(s) in parallel...", pending.len());
     }
@@ -468,8 +582,7 @@ fn run_updates(
             results[index].1 = result;
         }
     }
-    finish_host_steps(&mut steps, &results);
-    Ok(results)
+    Ok(())
 }
 
 fn verify_reboot(host: &Host, auth: &Auth, before: &str, requested: Instant) -> ResultKind {
@@ -519,6 +632,25 @@ fn verify_reboot_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn reboot_disconnect_or_timeout_requires_verification() {
+        for status in [0, 255] {
+            assert!(reboot_may_have_started(&Ok(
+                std::process::ExitStatus::from_raw(status << 8)
+            )));
+        }
+        assert!(reboot_may_have_started(&Err(io::Error::from(
+            io::ErrorKind::TimedOut
+        ))));
+        assert!(!reboot_may_have_started(&Ok(
+            std::process::ExitStatus::from_raw(1 << 8)
+        )));
+        assert!(!reboot_may_have_started(&Err(io::Error::from(
+            io::ErrorKind::BrokenPipe
+        ))));
+    }
 
     #[test]
     fn personal_reboot_choices_only_allow_explicitly_selected_ips() {

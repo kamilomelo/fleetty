@@ -35,6 +35,9 @@ fn bare_command_opens_menu_and_creates_private_inventory_for_editing() {
     );
     assert!(String::from_utf8_lossy(&output.stderr).starts_with(&banner));
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("Inventory:"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains(
+        "╭─ ● Fleetty\n├─ 1. Run routines\n├─ 2. Edit inventory\n├─ 3. Exit\n╰─❯ Choice:"
+    ));
     assert!(String::from_utf8_lossy(&output.stdout).contains("Edit inventory"));
     let directory = config.join("fleetty");
     let inventory = directory.join("inventory.toml");
@@ -77,4 +80,7 @@ fn linux_console_uses_ascii_banner() {
             env!("CARGO_PKG_VERSION")
         ))
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains(
+        ",- * Fleetty\n|- 1. Run routines\n|- 2. Edit inventory\n|- 3. Exit\n`-> Choice:"
+    ));
 }
