@@ -13,7 +13,7 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 
 ```toml
 [pcs]
-"192.0.2.10" = "alex"
+"192.0.2.10" = "user"
 
 [servers]
 "203.0.113.10" = ["admin", "deploy"]

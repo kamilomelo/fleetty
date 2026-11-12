@@ -32,13 +32,13 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
 
 [laptops_]
-"192.0.2.20" = "alex" # Personal: choose whether updates may reboot it
+"192.0.2.20" = "user" # Personal: choose whether updates may reboot it
 
 [-optional]
 "198.51.100.10" = "admin" # Excluded from "all" unless you opt in
 
 [-guest_]
-"198.51.100.20" = "alex" # Optional AND personal
+"198.51.100.20" = "user" # Optional AND personal
 ```
 
 Fleetty sorts priority IPs first, then by numeric IP. Group markers apply to
