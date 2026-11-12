@@ -10,12 +10,13 @@ You need Rust/Cargo and OpenSSH locally, and SSH access to your Arch hosts.
 From this repository:
 
 ```sh
-cargo install --path . --root ~/.local --locked
-fleetty
+cargo install --path . --root "$HOME/.local" --locked
+"$HOME/.local/bin/fleetty"
 ```
 
-Ensure `~/.local/bin` is on your `PATH`. Add `--offline` if dependencies are cached;
-use `--force` when reinstalling after a code change. The menu can create and edit
+Add `~/.local/bin` to your `PATH` to run `fleetty` from anywhere. Add `--offline`
+if dependencies are cached; use `--force` when reinstalling after a code change.
+The menu can create and edit
 `~/.config/fleetty/inventory.toml` (or `$XDG_CONFIG_HOME/fleetty/inventory.toml`).
 You can also run `fleetty /path/to/inventory.toml` to skip the home menu.
 
@@ -72,11 +73,39 @@ optional groups follow other groups, and **individual hosts** is last. See the
 - **Shutdown:** Confirm twice, then send concurrent shutdown requests.
 - **Run command:** Execute your command as the SSH user on selected accounts.
 
-Fleetty asks you to enter and confirm a shared password before contacting hosts.
-SSH and sudo can prompt for account-specific alternatives if it is rejected. For
-encrypted SSH keys, unlock them with `ssh-add` before starting Fleetty.
+Before contacting hosts, Fleetty asks whether to trust the first SSH key seen
+for each selected IP **for this run only**; the default **No** keeps normal host-key
+checks. **Yes** uses a temporary, Fleetty-only known-hosts file without changing
+your `~/.ssh/known_hosts`, but a different machine at an IP could then receive
+your credentials and commands. Fleetty also asks you to enter and confirm a
+shared password. SSH and sudo can prompt for account-specific alternatives if
+it is rejected. For encrypted SSH keys, unlock them with `ssh-add` before
+starting Fleetty.
 See [usage, SSH setup, outcomes, and safety notes](docs/usage.md).
+
+## Project layout
+
+```text
+fleetty/
+├── src/
+│   ├── main.rs             CLI entry point
+│   ├── inventory.rs        Inventory parsing and host ordering
+│   ├── routines.rs         Routine orchestration and reboot verification
+│   ├── ssh.rs              SSH connections and checks
+│   ├── update.rs           Interactive package updates
+│   └── kartouche.rs        Copied terminal-rendering template
+├── inventory.example.toml  Example inventory
+├── docs/usage.md           Detailed usage and safety notes
+└── tests/                 CLI integration tests
+```
+
+## Development
+
+From the repository, run `cargo fmt --all --check`, `cargo test --locked`, and
+`cargo clippy --locked --all-targets -- -D warnings`. Add `--offline` to Cargo
+commands when dependencies are already cached. Tests use local fixtures; they
+do not contact inventory hosts.
 
 ## License
 
-[MIT](LICENSE) © 2026 Kamilo Melo.
+Licensed under the [MIT License](LICENSE). © 2026 Kamilo Melo.
