@@ -31,17 +31,34 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 [_core]
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
 
+[laptops_]
+"192.0.2.20" = "alex" # Personal: choose whether updates may reboot it
+
 [-optional]
 "198.51.100.10" = "admin" # Excluded from "all" unless you opt in
+
+[-guest_]
+"198.51.100.20" = "alex" # Optional AND personal
 ```
 
-Fleetty sorts by numeric IP. Before the password prompt, choose **one account
-per IP** for updates, reboots, and shutdowns; checks and commands let you choose one or
-all accounts per IP. The `_` prefix marks a priority group; `-` (for example,
-`[-optional]`) excludes its machines from **all** unless you opt in. `-` groups
-appear after other groups, before **individual hosts** (which is always last).
-**All** is always first. See the
-[inventory and run guide](docs/usage.md).
+Fleetty sorts priority IPs first, then by numeric IP. Group markers apply to
+the **whole IP**, even if another account belongs to a different group:
+
+- **Leading `_`** (for example, `[_core]`): priority during updates. Update
+  these machines first and verify each reboot before continuing.
+- **Leading `-`** (for example, `[-optional]`): exclude from **all** by default.
+  You can opt in or select the group or host directly.
+- **Trailing `_`** (for example, `[laptops_]`): personal machine. Before updates,
+  choose whether **none** (the default), all, or specific selected personal
+  machines may reboot if packages change. Without permission, an updated machine
+  stays on and is reported as **reboot pending**. `[-guest_]` combines optional
+  and personal; an IP cannot be both priority and personal.
+
+Use `[pc_]`, not `[*pc]` (invalid TOML) or `["*pc"]` (no longer a marker).
+For updates, reboots, and shutdowns, choose **one account per IP**; checks and
+commands can use one or all accounts. In the selection menu, **all** is first,
+optional groups follow other groups, and **individual hosts** is last. See the
+[inventory and run guide](docs/usage.md) for details.
 
 ## Routines
 

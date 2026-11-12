@@ -18,7 +18,7 @@
 # [laptops_]
 # "192.0.2.20" = "kamilo"
 
-# Exclude these machines from "all" by default; this group appears last in the
-# selection menu (after individual hosts) and can still be selected explicitly.
+# Exclude these machines from "all" by default; optional groups appear after
+# other groups but before "individual hosts" and can be selected explicitly.
 # [-optional]
 # "198.51.100.10" = "admin"
