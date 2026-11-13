@@ -16,7 +16,8 @@
 # Personal machines: choose reboot policy before updates; default is no reboot.
 # A trailing underscore is the personal marker (no quotes needed).
 # [laptops_]
-# "192.0.2.20" = "kamilo"
+# "192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["user", "admin"] }
+# Fallback IPs belong to the same machine; don't add them as separate entries.
 
 # Exclude these machines from "all" by default; optional groups appear after
 # other groups but before "individual hosts" and can be selected explicitly.

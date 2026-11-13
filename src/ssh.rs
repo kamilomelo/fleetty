@@ -80,6 +80,10 @@ impl std::fmt::Display for ConnectError {
 }
 
 pub(crate) fn ssh(host: &Host, remote: &str, interactive: bool, auth: &Auth) -> Command {
+    ssh_at(host, remote, interactive, auth, &host.dial_address())
+}
+
+fn ssh_at(host: &Host, remote: &str, interactive: bool, auth: &Auth, address: &str) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.args([
         "-o",
@@ -107,7 +111,7 @@ pub(crate) fn ssh(host: &Host, remote: &str, interactive: bool, auth: &Auth) -> 
     cmd.arg("-l")
         .arg(&host.user)
         .arg("--")
-        .arg(&host.address)
+        .arg(address)
         .arg(remote);
     auth.configure(&mut cmd);
     cmd
@@ -291,14 +295,24 @@ fn classify_connection(code: Option<i32>, stderr: &str) -> (ResultKind, bool) {
         // SSH reached the remote shell; its command failed. Retrying won't help.
         return (ResultKind::Failed, false);
     }
-    let non_retryable = stderr.contains("Permission denied")
-        || stderr.contains("Host key verification failed")
-        || stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
-        || stderr.contains("Could not resolve hostname");
-    if non_retryable {
-        (ResultKind::Failed, false)
-    } else {
+    if [
+        "Connection refused",
+        "Connection timed out",
+        "Operation timed out",
+        "No route to host",
+        "Network is unreachable",
+    ]
+    .iter()
+    .any(|message| stderr.contains(message))
+        && !stderr.contains("Permission denied")
+        && !stderr.contains("Host key verification failed")
+        && !stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    {
         (ResultKind::Unreachable, true)
+    } else {
+        // Unknown SSH errors are not proof of a down NIC. Do not silently
+        // switch IPs on an authentication or host-key failure.
+        (ResultKind::Failed, false)
     }
 }
 
@@ -308,11 +322,11 @@ fn authentication_failed(code: Option<i32>, stderr: &str) -> bool {
         && !stderr.contains("Permission denied (publickey).")
 }
 
-fn changed_host_key_guidance(code: Option<i32>, stderr: &str, host: &Host) -> String {
+fn changed_host_key_guidance(code: Option<i32>, stderr: &str, address: &str) -> String {
     if code == Some(255) && stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
         format!(
             "\nVerify the presented host-key fingerprint against a trusted source (such as the host console or administrator). Do not accept it if you cannot verify it. Only if the change is expected, run `ssh-keygen -R {}` for this IP, then reconnect and verify the replacement key before accepting it. Do not clear keys for the whole inventory.",
-            host.address
+            address
         )
     } else {
         String::new()
@@ -320,14 +334,52 @@ fn changed_host_key_guidance(code: Option<i32>, stderr: &str, host: &Host) -> St
 }
 
 fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
-    for attempt in 1..=CONNECTION_ATTEMPTS {
+    let addresses = host.connection_order();
+    connect_with(host, |address| {
+        let attempts = if address == *addresses.last().expect("at least one address") {
+            CONNECTION_ATTEMPTS
+        } else {
+            1
+        };
+        connect_at(host, auth, address, attempts)
+    })
+}
+
+fn connect_with(
+    host: &Host,
+    mut try_address: impl FnMut(&str) -> Result<String, ConnectError>,
+) -> Result<String, ConnectError> {
+    let mut last_error = None;
+    for address in host.connection_order() {
+        match try_address(address) {
+            Ok(name) => {
+                host.set_dial_address(address);
+                if address != host.address {
+                    println!("{}: reachable via fallback {address}", host.target());
+                }
+                return Ok(name);
+            }
+            Err(err) if matches!(err.kind, ResultKind::Unreachable) => last_error = Some(err),
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last_error.expect("at least one address"))
+}
+
+fn connect_at(
+    host: &Host,
+    auth: &Auth,
+    address: &str,
+    attempts: usize,
+) -> Result<String, ConnectError> {
+    for attempt in 1..=attempts {
         // `hostname` is an optional package on some Arch installations.
         let output = match bounded_output(
-            ssh(host, "cat /proc/sys/kernel/hostname", false, auth),
+            ssh_at(host, "cat /proc/sys/kernel/hostname", false, auth, address),
             None,
         ) {
             Ok(output) => output,
-            Err(err) if err.kind() == io::ErrorKind::TimedOut && attempt < CONNECTION_ATTEMPTS => {
+            Err(err) if err.kind() == io::ErrorKind::TimedOut && attempt < attempts => {
                 continue;
             }
             Err(err) => {
@@ -337,7 +389,7 @@ fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
                     } else {
                         ResultKind::Failed
                     },
-                    message: format!("SSH check failed: {err}"),
+                    message: format!("{address}: SSH check failed: {err}"),
                     authentication_failed: false,
                 });
             }
@@ -355,11 +407,11 @@ fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let (kind, retry) = classify_connection(output.status.code(), &stderr);
-        if !retry || attempt == CONNECTION_ATTEMPTS {
+        if !retry || attempt == attempts {
             return Err(ConnectError {
                 kind,
                 message: format!(
-                    "SSH check failed (exit {}, attempt {attempt}): {}{}{}",
+                    "{address}: SSH check failed (exit {}, attempt {attempt}): {}{}{}",
                     output.status,
                     stderr.trim(),
                     if stderr.contains("Permission denied (publickey).") {
@@ -367,7 +419,7 @@ fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
                     } else {
                         ""
                     },
-                    changed_host_key_guidance(output.status.code(), &stderr, host)
+                    changed_host_key_guidance(output.status.code(), &stderr, address)
                 ),
                 authentication_failed: authentication_failed(output.status.code(), &stderr),
             });
@@ -375,7 +427,7 @@ fn connect(host: &Host, auth: &Auth) -> Result<String, ConnectError> {
         println!(
             "{}",
             stdout_color(
-                &format!("SSH unavailable; retrying ({attempt}/{CONNECTION_ATTEMPTS})..."),
+                &format!("SSH unavailable; retrying ({attempt}/{attempts})..."),
                 Color::Yellow
             )
         );
@@ -536,16 +588,53 @@ fn prepare_sudo_with(
 }
 
 pub(crate) fn boot_id(host: &Host, auth: &Auth) -> Result<String, String> {
-    let output = bounded_output(
-        ssh(host, "cat /proc/sys/kernel/random/boot_id", false, auth),
-        None,
-    )
-    .map_err(|e| e.to_string())?;
-    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !output.status.success() || id.is_empty() {
-        return Err("could not read boot ID".into());
+    boot_id_with(host, |address| {
+        bounded_output(
+            ssh_at(
+                host,
+                "cat /proc/sys/kernel/random/boot_id",
+                false,
+                auth,
+                address,
+            ),
+            None,
+        )
+    })
+}
+
+fn boot_id_with(
+    host: &Host,
+    mut read: impl FnMut(&str) -> io::Result<Output>,
+) -> Result<String, String> {
+    for address in host.connection_order() {
+        let output = match read(address) {
+            Ok(output) => output,
+            Err(err) if err.kind() == io::ErrorKind::TimedOut => continue,
+            Err(err) => return Err(err.to_string()),
+        };
+        if output.status.success() {
+            let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if id.is_empty() {
+                return Err("could not read boot ID".into());
+            }
+            if address != host.dial_address() {
+                println!("{}: SSH now reachable via {address}", host.target());
+            }
+            host.set_dial_address(address);
+            return Ok(id);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !matches!(
+            classify_connection(output.status.code(), &stderr).0,
+            ResultKind::Unreachable
+        ) {
+            return Err(format!(
+                "{address}: could not read boot ID: {}",
+                stderr.trim()
+            ));
+        }
     }
-    Ok(id)
+    Err("could not read boot ID: all addresses unreachable".into())
 }
 
 pub(crate) fn detect_aur(host: &Host, auth: &Auth) -> Result<Aur, String> {
@@ -618,14 +707,115 @@ pub(crate) fn check_read_only(host: &Host, auth: &Auth) -> Result<Aur, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::{Inventory, build_hosts};
     use crate::results::ResultKind;
     use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::process::ExitStatusExt;
     use std::{collections::HashMap, process::Command};
+
+    fn multi_ip_host() -> Host {
+        let inventory: Inventory = toml::from_str(
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\", \"192.0.2.3\"], users = \"admin\" }",
+        ).unwrap();
+        build_hosts(&inventory).unwrap().remove(0)
+    }
+
+    #[test]
+    fn unreachable_primary_uses_fallback_but_auth_or_host_key_failure_does_not() {
+        let host = multi_ip_host();
+        let mut tried = Vec::new();
+        assert_eq!(
+            connect_with(&host, |ip| {
+                tried.push(ip.to_owned());
+                if ip == "192.0.2.1" {
+                    Err(ConnectError {
+                        kind: ResultKind::Unreachable,
+                        message: "offline".into(),
+                        authentication_failed: false,
+                    })
+                } else {
+                    Ok("workstation".into())
+                }
+            })
+            .map_err(|e| e.message)
+            .unwrap(),
+            "workstation"
+        );
+        assert_eq!(tried, ["192.0.2.1", "192.0.2.2"]);
+        assert_eq!(host.target(), "admin@192.0.2.1");
+        assert_eq!(host.dial_address(), "192.0.2.2");
+        let auth = Auth::for_test(b"shared");
+        let args: Vec<_> = ssh(&host, "true", false, &auth)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"192.0.2.2".to_string()));
+
+        host.set_dial_address("192.0.2.1");
+        for message in ["Permission denied", "Host key verification failed"] {
+            let mut tried = Vec::new();
+            let error = connect_with(&host, |ip| {
+                tried.push(ip.to_owned());
+                Err(ConnectError {
+                    kind: ResultKind::Failed,
+                    message: message.into(),
+                    authentication_failed: message == "Permission denied",
+                })
+            })
+            .err()
+            .unwrap();
+            assert_eq!(error.message, message);
+            assert_eq!(tried, ["192.0.2.1"]);
+        }
+    }
+
+    #[test]
+    fn boot_id_falls_back_after_a_nic_goes_down_but_not_on_key_failure() {
+        let host = multi_ip_host();
+        let mut tried = Vec::new();
+        let id = boot_id_with(&host, |ip| {
+            tried.push(ip.to_owned());
+            Ok(if ip == "192.0.2.1" {
+                Output {
+                    status: ExitStatus::from_raw(255 << 8),
+                    stdout: vec![],
+                    stderr: b"No route to host".to_vec(),
+                }
+            } else {
+                Output {
+                    status: ExitStatus::from_raw(0),
+                    stdout: b"new-boot-id\n".to_vec(),
+                    stderr: vec![],
+                }
+            })
+        })
+        .unwrap();
+        assert_eq!(id, "new-boot-id");
+        assert_eq!(tried, ["192.0.2.1", "192.0.2.2"]);
+        assert_eq!(host.dial_address(), "192.0.2.2");
+
+        host.set_dial_address("192.0.2.1");
+        let mut tried = Vec::new();
+        assert!(
+            boot_id_with(&host, |ip| {
+                tried.push(ip.to_owned());
+                Ok(Output {
+                    status: ExitStatus::from_raw(255 << 8),
+                    stdout: vec![],
+                    stderr: b"Host key verification failed".to_vec(),
+                })
+            })
+            .is_err()
+        );
+        assert_eq!(tried, ["192.0.2.1"]);
+    }
 
     #[test]
     fn temporary_host_key_trust_is_explicit_and_does_not_edit_user_known_hosts() {
         let host = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "admin".into(),
             groups: vec![],
             priority: false,
@@ -722,13 +912,15 @@ mod tests {
     fn changed_host_key_guidance_is_specific_and_never_removes_keys() {
         let host = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "admin".into(),
             groups: vec![],
             priority: false,
             personal: false,
         };
         let warning = "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nSHA256:example\nHost key verification failed.";
-        let guidance = changed_host_key_guidance(Some(255), warning, &host);
+        let guidance = changed_host_key_guidance(Some(255), warning, &host.address);
         assert!(guidance.contains("Verify the presented host-key fingerprint"));
         assert!(guidance.contains("Only if the change is expected"));
         assert!(guidance.contains("ssh-keygen -R 192.0.2.1"));
@@ -741,7 +933,7 @@ mod tests {
             (Some(255), "Connection refused"),
             (Some(1), warning),
         ] {
-            assert!(changed_host_key_guidance(code, message, &host).is_empty());
+            assert!(changed_host_key_guidance(code, message, &host.address).is_empty());
         }
     }
 
@@ -755,6 +947,8 @@ mod tests {
         };
         let admin = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "admin".into(),
             groups: vec!["servers".into()],
             priority: false,
@@ -814,6 +1008,8 @@ mod tests {
         };
         let host = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "deploy".into(),
             groups: vec!["servers".into()],
             priority: false,
@@ -868,6 +1064,8 @@ mod tests {
         ));
         let host = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "admin".into(),
             groups: vec![],
             priority: false,
@@ -898,6 +1096,17 @@ mod tests {
         let (kind, retry) = classify_connection(Some(255), "ssh: connect: No route to host");
         assert!(matches!(kind, ResultKind::Unreachable));
         assert!(retry);
+        for stderr in [
+            "Permission denied (publickey).",
+            "Host key verification failed.",
+            "No ED25519 host key is known and you have requested strict checking.",
+            "Connection closed by UNKNOWN port 65535",
+            "Permission denied; No route to host",
+        ] {
+            let (kind, retry) = classify_connection(Some(255), stderr);
+            assert!(matches!(kind, ResultKind::Failed), "{stderr}");
+            assert!(!retry, "{stderr}");
+        }
     }
 
     #[test]

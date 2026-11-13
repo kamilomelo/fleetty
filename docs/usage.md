@@ -14,6 +14,7 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 ```toml
 [pcs]
 "192.0.2.10" = "user"
+"192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["admin", "user"] }
 
 [servers]
 "203.0.113.10" = ["admin", "deploy"]
@@ -26,7 +27,18 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 ```
 
 - Quote IPv4/IPv6 addresses: dots otherwise become nested TOML keys. Spaces
-  around `=` are fine. Use an array only for multiple usernames on one IP.
+  around `=` are fine. Use a username array for multiple accounts on one machine.
+- For multiple NICs on one machine, put the preferred IP in the key and one or
+  more other IPs in the ordered `fallback_ips` list. `users` accepts a username
+  or an array of usernames. Fleetty treats the addresses as one machine, uses
+  the same selected account and credentials on fallback, and does not run an
+  action twice. It tries the preferred IP first and the fallbacks in order;
+  after a successful connection it tries that working IP first. It switches
+  IPs only after SSH is unreachable; an authentication failure or changed host
+  key stops the attempt instead. Reboot verification can switch IPs if the
+  previously used NIC stays down. Do not
+  list a fallback as another machine's primary IP or fallback IP. Existing
+  single-IP entries need no changes. Keep the inline table on one line in TOML.
 - Choose all, a group, or individual accounts. The same IP/username in several
   groups is visited once. Before entering the shared password, choose one or
   all accounts for each IP with multiple usernames when checking or running
@@ -166,8 +178,10 @@ pause (`0` disables it); redirected output never pauses.
   and a 16 KiB output limit per stream. Interactive updates and custom commands
   have no automatic deadline, since AUR builds and user commands may take a
   long time; they still require supervision.
-- Connection failures are tried up to three times. Authentication and host-key
-  failures are not retried. An **unreachable** host is shown in red with a
+- For a single-IP machine, connection failures are tried up to three times;
+  with fallback IPs, Fleetty tries each address in order and retries the last
+  address up to three times. Authentication and host-key failures are not
+  retried. An **unreachable** host is shown in red with a
   yellow warning, but does not by itself cause a nonzero exit status: it may
   have been intentionally shut down.
 - **Skipped** hosts (such as a declined pacman-only update) produce warnings.

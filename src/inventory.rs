@@ -7,9 +7,33 @@ use std::{
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
+    sync::{Arc, Mutex},
 };
 
-pub(crate) type Inventory = BTreeMap<String, BTreeMap<String, Usernames>>;
+pub(crate) type Inventory = BTreeMap<String, BTreeMap<String, Entry>>;
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Entry {
+    Simple(Usernames),
+    WithFallbacks(FallbackEntry),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FallbackEntry {
+    fallback_ips: Vec<String>,
+    users: Usernames,
+}
+
+impl Entry {
+    fn parts(&self) -> (&Usernames, &[String]) {
+        match self {
+            Self::Simple(users) => (users, &[]),
+            Self::WithFallbacks(entry) => (&entry.users, &entry.fallback_ips),
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -30,6 +54,8 @@ impl Usernames {
 #[derive(Clone)]
 pub(crate) struct Host {
     pub(crate) address: String,
+    pub(crate) fallback_ips: Vec<String>,
+    pub(crate) active_address: Arc<Mutex<Option<String>>>,
     pub(crate) user: String,
     pub(crate) groups: Vec<String>,
     pub(crate) priority: bool,
@@ -39,6 +65,30 @@ pub(crate) struct Host {
 impl Host {
     pub(crate) fn target(&self) -> String {
         format!("{}@{}", self.user, self.address)
+    }
+
+    pub(crate) fn dial_address(&self) -> String {
+        self.active_address
+            .lock()
+            .expect("active address lock")
+            .as_deref()
+            .unwrap_or(&self.address)
+            .to_owned()
+    }
+
+    pub(crate) fn set_dial_address(&self, address: &str) {
+        *self.active_address.lock().expect("active address lock") = Some(address.to_owned());
+    }
+
+    pub(crate) fn connection_order(&self) -> Vec<&str> {
+        let active = self.dial_address();
+        let mut ips = vec![self.address.as_str()];
+        ips.extend(self.fallback_ips.iter().map(String::as_str));
+        if let Some(index) = ips.iter().position(|ip| *ip == active) {
+            let current = ips.remove(index);
+            ips.insert(0, current);
+        }
+        ips
     }
 }
 
@@ -101,14 +151,39 @@ pub(crate) fn edit_inventory(path: &Path) -> Result<(), String> {
 pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     let mut hosts: Vec<Host> = Vec::new();
     let mut by_target: HashMap<(IpAddr, String), usize> = HashMap::new();
+    let mut by_machine: HashMap<IpAddr, Vec<String>> = HashMap::new();
     for (group, entries) in inventory {
         if group.trim().is_empty() || matches!(group.as_str(), "_" | "-") || entries.is_empty() {
             return Err(format!("empty group name or group with no hosts: {group}"));
         }
-        for (address, usernames) in entries {
+        for (address, entry) in entries {
             let ip: IpAddr = address
                 .parse()
                 .map_err(|_| format!("{address}: expected a valid IPv4 or IPv6 address"))?;
+            let (usernames, fallbacks) = entry.parts();
+            if matches!(entry, Entry::WithFallbacks(_)) && fallbacks.is_empty() {
+                return Err(format!("{address}: specify at least one fallback IP"));
+            }
+            let mut fallback_ips = Vec::new();
+            let mut seen_ips = HashSet::from([ip]);
+            for fallback in fallbacks {
+                let other: IpAddr = fallback
+                    .parse()
+                    .map_err(|_| format!("{address}: invalid fallback IP address: {fallback}"))?;
+                if !seen_ips.insert(other) {
+                    return Err(format!(
+                        "{address}: duplicate primary or fallback IP: {fallback}"
+                    ));
+                }
+                fallback_ips.push(other.to_string());
+            }
+            let defined = by_machine.entry(ip).or_default();
+            if !fallback_ips.is_empty() {
+                if !defined.is_empty() && *defined != fallback_ips {
+                    return Err(format!("{address}: conflicting fallback IPs across groups"));
+                }
+                *defined = fallback_ips;
+            }
             if usernames.iter().len() == 0 {
                 return Err(format!("{address}: specify at least one SSH username"));
             }
@@ -131,6 +206,8 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
                     by_target.insert((ip, user.clone()), hosts.len());
                     hosts.push(Host {
                         address: ip.to_string(),
+                        fallback_ips: Vec::new(),
+                        active_address: Default::default(),
                         user: user.clone(),
                         groups: vec![group.clone()],
                         priority: false,
@@ -142,6 +219,24 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     }
     if hosts.is_empty() {
         return Err("inventory has no hosts".into());
+    }
+    let mut owners = HashMap::new();
+    for (primary, fallbacks) in &by_machine {
+        for address in std::iter::once(*primary).chain(
+            fallbacks
+                .iter()
+                .map(|ip| ip.parse::<IpAddr>().expect("validated IP")),
+        ) {
+            if let Some(previous) = owners.insert(address, primary)
+                && previous != primary
+            {
+                return Err(format!("{address}: IP belongs to more than one machine"));
+            }
+        }
+    }
+    for host in &mut hosts {
+        host.fallback_ips =
+            by_machine[&host.address.parse::<IpAddr>().expect("validated IP")].clone();
     }
     // Priority applies to the machine, even when another account on the same
     // IP is selected through an ordinary group.
@@ -216,6 +311,51 @@ mod tests {
                 .groups,
             ["pcs", "servers"]
         );
+    }
+
+    #[test]
+    fn fallback_ips_belong_to_one_machine_and_all_its_accounts() {
+        let inventory: Inventory = toml::from_str(
+            "[pcs_]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\", \"2001:db8::1\"], users = [\"admin\", \"user\"] }\n[servers]\n\"192.0.2.1\" = \"admin\"",
+        ).unwrap();
+        let hosts = build_hosts(&inventory).unwrap();
+        assert_eq!(hosts.len(), 2);
+        assert!(hosts.iter().all(|host| host.personal));
+        assert!(
+            hosts
+                .iter()
+                .all(|host| host.fallback_ips == ["192.0.2.2", "2001:db8::1"])
+        );
+        assert!(hosts.iter().all(|host| host.address == "192.0.2.1"));
+        assert_eq!(
+            hosts[0].connection_order(),
+            ["192.0.2.1", "192.0.2.2", "2001:db8::1"]
+        );
+        hosts[0].set_dial_address("192.0.2.2");
+        assert_eq!(
+            hosts[0].connection_order(),
+            ["192.0.2.2", "192.0.2.1", "2001:db8::1"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_duplicate_or_ambiguous_fallback_ips() {
+        for invalid in [
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"not-an-ip\"], users = \"user\" }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.1\"], users = \"user\" }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\", \"192.0.2.2\"], users = \"user\" }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\"], users = \"user\" }\n\"192.0.2.2\" = \"admin\"",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.3\"], users = \"user\" }\n\"192.0.2.2\" = { fallback_ips = [\"192.0.2.3\"], users = \"admin\" }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\"], users = \"user\" }\n[servers]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.3\"], users = \"admin\" }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [], users = [] }",
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [], users = \"user\" }",
+        ] {
+            let inventory: Inventory = toml::from_str(invalid).unwrap();
+            assert!(build_hosts(&inventory).is_err(), "accepted {invalid}");
+        }
+        assert!(toml::from_str::<Inventory>(
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\"], users = \"user\", typo = true }"
+        ).is_err());
     }
 
     #[test]

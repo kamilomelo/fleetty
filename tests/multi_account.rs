@@ -54,6 +54,18 @@ fn update_reboot_and_shutdown_choose_exactly_one_account() {
 }
 
 #[test]
+fn multiple_ips_are_one_machine_with_one_chosen_update_account() {
+    let inventory = "[servers]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\", \"192.0.2.3\"], users = [\"admin\", \"user\"] }\n";
+    let output = run_with_inventory(inventory, "1\n2\n2\nn\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Choose ONE account to update 192.0.2.1"));
+    assert!(text.contains("Selected: user@192.0.2.1"));
+    assert!(!text.contains("Selected: admin@192.0.2.1,"));
+    assert!(!text.contains("Selected: user@192.0.2.2"));
+}
+
+#[test]
 fn declining_reboot_confirmation_stops_before_any_ssh() {
     let output = run_with_inventory("[servers]\n\"192.0.2.1\" = \"admin\"\n", "1\n3\ny\nn\n");
     assert!(output.status.success());

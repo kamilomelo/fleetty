@@ -22,7 +22,8 @@ You can also run `fleetty /path/to/inventory.toml` to skip the home menu.
 
 ## Inventory
 
-Quote IP addresses; values are SSH usernames, **never passwords**:
+Quote IP addresses; `users` and simple-entry values are SSH usernames,
+**never passwords**:
 
 ```toml
 [servers]
@@ -33,7 +34,7 @@ Quote IP addresses; values are SSH usernames, **never passwords**:
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
 
 [laptops_]
-"192.0.2.20" = "user" # Personal: choose whether updates may reboot it
+"192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["user", "admin"] }
 
 [-optional]
 "198.51.100.10" = "admin" # Excluded from "all" unless you opt in
@@ -56,9 +57,16 @@ the **whole IP**, even if another account belongs to a different group:
   and personal; an IP cannot be both priority and personal.
 
 Use `[pc_]`, not `[*pc]` (invalid TOML) or `["*pc"]` (no longer a marker).
-For updates, reboots, and shutdowns, choose **one account per IP**; checks and
-commands can use one or all accounts. In the selection menu, **all** is first,
-optional groups follow other groups, and **individual hosts** is last. See the
+For a machine with multiple NICs, use its preferred IP as the key and list
+additional IPs in `fallback_ips`, in order. Fleetty treats them as **one
+machine**: it tries another IP only when SSH cannot reach the current one,
+using the same selected account and credentials. It also tries alternate IPs
+when verifying a reboot. Authentication and host-key failures do not trigger
+fallback. Do not list those fallback IPs as separate machines.
+For updates, reboots, and shutdowns, choose **one account per machine**;
+checks and commands can use one or all accounts. In the selection menu,
+**all** is first, optional groups follow other groups, and **individual hosts**
+is last. See the
 [inventory and run guide](docs/usage.md) for details.
 
 ## Routines

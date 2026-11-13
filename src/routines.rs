@@ -200,9 +200,9 @@ fn run_reboot(
         match connect_account(host, credentials) {
             Ok((name, auth)) => {
                 println!("Found {name} ({})", host.target());
-                match prepare_sudo(host, &auth, credentials)
-                    .and_then(|sudo_auth| boot_id(host, &auth).map(|before| (sudo_auth, before)))
-                {
+                match boot_id(host, &auth).and_then(|before| {
+                    prepare_sudo(host, &auth, credentials).map(|sudo_auth| (sudo_auth, before))
+                }) {
                     Ok((sudo_auth, before)) => {
                         ready.push(((*host).clone(), name, auth, sudo_auth, before));
                     }
@@ -656,6 +656,8 @@ mod tests {
     fn personal_reboot_choices_only_allow_explicitly_selected_ips() {
         let first = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "owner".into(),
             groups: vec!["laptops_".into()],
             priority: false,
@@ -706,6 +708,8 @@ mod tests {
     fn deferred_reboot_checks_even_after_timeout_and_requires_new_boot_id() {
         let host = Host {
             address: "192.0.2.1".into(),
+            fallback_ips: vec![],
+            active_address: Default::default(),
             user: "admin".into(),
             groups: vec!["servers".into()],
             priority: false,
