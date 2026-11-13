@@ -29,12 +29,14 @@ Quote IP addresses; `users` and simple-entry values are SSH usernames,
 [servers]
 "192.0.2.10" = "admin"
 "192.0.2.11" = ["admin", "deploy"] # Two accounts on one machine
+"192.0.2.13" = { users = "admin", disabled = true } # Retained, never contacted
 
 [_core]
 "192.0.2.12" = "admin" # Priority: update first, confirm reboot before continuing
 
 [laptops_]
 "192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["user", "admin"] }
+"192.0.2.30" = { fallback_ips = ["192.0.2.31"], users = "user", disabled = true }
 
 [-optional]
 "198.51.100.10" = "admin" # Excluded from "all" unless you opt in
@@ -63,6 +65,10 @@ machine**: it tries another IP only when SSH cannot reach the current one,
 using the same selected account and credentials. It also tries alternate IPs
 when verifying a reboot. Authentication and host-key failures do not trigger
 fallback. Do not list those fallback IPs as separate machines.
+Use `disabled = true` to keep a machine in the inventory but remove **all** its
+accounts and addresses from every selection and action. `disabled = false` or
+omitting it leaves the machine enabled. This also works without fallback IPs
+using `{ users = "admin", disabled = true }`; `"yes"` is not a TOML boolean.
 For updates, reboots, and shutdowns, choose **one account per machine**;
 checks and commands can use one or all accounts. In the selection menu,
 **all** is first, optional groups follow other groups, and **individual hosts**

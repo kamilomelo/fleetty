@@ -16,21 +16,23 @@ pub(crate) type Inventory = BTreeMap<String, BTreeMap<String, Entry>>;
 #[serde(untagged)]
 pub(crate) enum Entry {
     Simple(Usernames),
-    WithFallbacks(FallbackEntry),
+    Machine(MachineEntry),
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FallbackEntry {
-    fallback_ips: Vec<String>,
+pub(crate) struct MachineEntry {
+    fallback_ips: Option<Vec<String>>,
     users: Usernames,
+    #[serde(default)]
+    disabled: bool,
 }
 
 impl Entry {
     fn parts(&self) -> (&Usernames, &[String]) {
         match self {
             Self::Simple(users) => (users, &[]),
-            Self::WithFallbacks(entry) => (&entry.users, &entry.fallback_ips),
+            Self::Machine(entry) => (&entry.users, entry.fallback_ips.as_deref().unwrap_or(&[])),
         }
     }
 }
@@ -152,6 +154,7 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     let mut hosts: Vec<Host> = Vec::new();
     let mut by_target: HashMap<(IpAddr, String), usize> = HashMap::new();
     let mut by_machine: HashMap<IpAddr, Vec<String>> = HashMap::new();
+    let mut disabled_ips = HashSet::new();
     for (group, entries) in inventory {
         if group.trim().is_empty() || matches!(group.as_str(), "_" | "-") || entries.is_empty() {
             return Err(format!("empty group name or group with no hosts: {group}"));
@@ -161,8 +164,13 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
                 .parse()
                 .map_err(|_| format!("{address}: expected a valid IPv4 or IPv6 address"))?;
             let (usernames, fallbacks) = entry.parts();
-            if matches!(entry, Entry::WithFallbacks(_)) && fallbacks.is_empty() {
-                return Err(format!("{address}: specify at least one fallback IP"));
+            if let Entry::Machine(machine) = entry {
+                if machine.fallback_ips.as_ref().is_some_and(Vec::is_empty) {
+                    return Err(format!("{address}: specify at least one fallback IP"));
+                }
+                if machine.disabled {
+                    disabled_ips.insert(ip);
+                }
             }
             let mut fallback_ips = Vec::new();
             let mut seen_ips = HashSet::from([ip]);
@@ -217,9 +225,6 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
             }
         }
     }
-    if hosts.is_empty() {
-        return Err("inventory has no hosts".into());
-    }
     let mut owners = HashMap::new();
     for (primary, fallbacks) in &by_machine {
         for address in std::iter::once(*primary).chain(
@@ -237,6 +242,15 @@ pub(crate) fn build_hosts(inventory: &Inventory) -> Result<Vec<Host>, String> {
     for host in &mut hosts {
         host.fallback_ips =
             by_machine[&host.address.parse::<IpAddr>().expect("validated IP")].clone();
+    }
+    if hosts.is_empty() {
+        return Err("inventory has no hosts".into());
+    }
+    hosts.retain(|host| {
+        !disabled_ips.contains(&host.address.parse::<IpAddr>().expect("validated IP"))
+    });
+    if hosts.is_empty() {
+        return Err("inventory has no enabled hosts".into());
     }
     // Priority applies to the machine, even when another account on the same
     // IP is selected through an ordinary group.
@@ -336,6 +350,55 @@ mod tests {
             hosts[0].connection_order(),
             ["192.0.2.2", "192.0.2.1", "2001:db8::1"]
         );
+    }
+
+    #[test]
+    fn disabled_excludes_every_account_and_group_of_the_machine() {
+        let inventory: Inventory = toml::from_str(
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\"], users = [\"admin\", \"user\"], disabled = true }\n\"192.0.2.3\" = { users = \"admin\", disabled = true }\n\"192.0.2.4\" = { users = \"user\", disabled = false }\n\"192.0.2.5\" = \"admin\"\n[servers]\n\"192.0.2.1\" = \"other\"\n\"192.0.2.4\" = \"admin\"",
+        )
+        .unwrap();
+        let hosts = build_hosts(&inventory).unwrap();
+        assert_eq!(hosts.len(), 3);
+        assert!(
+            hosts
+                .iter()
+                .all(|host| host.address != "192.0.2.1" && host.address != "192.0.2.3")
+        );
+        assert_eq!(
+            hosts
+                .iter()
+                .filter(|host| host.address == "192.0.2.4")
+                .count(),
+            2
+        );
+        assert!(hosts.iter().any(|host| host.address == "192.0.2.5"));
+    }
+
+    #[test]
+    fn disabled_in_any_group_wins_and_all_disabled_stops_before_selection() {
+        let inventory: Inventory = toml::from_str(
+            "[pcs]\n\"192.0.2.1\" = { users = \"admin\", disabled = false }\n[servers]\n\"192.0.2.1\" = { users = \"user\", disabled = true }",
+        )
+        .unwrap();
+        assert_eq!(
+            build_hosts(&inventory).err().unwrap(),
+            "inventory has no enabled hosts"
+        );
+    }
+
+    #[test]
+    fn disabled_must_be_a_boolean_and_inventory_is_still_validated() {
+        for invalid in [
+            "[pcs]\n\"192.0.2.1\" = { users = \"admin\", disabled = \"yes\" }",
+            "[pcs]\n\"192.0.2.1\" = { users = \"admin\", disabled = 1 }",
+        ] {
+            assert!(toml::from_str::<Inventory>(invalid).is_err());
+        }
+        let inventory: Inventory = toml::from_str(
+            "[pcs]\n\"192.0.2.1\" = { fallback_ips = [\"invalid\"], users = \"admin\", disabled = true }\n\"192.0.2.3\" = \"admin\"",
+        ).unwrap();
+        assert!(build_hosts(&inventory).is_err());
     }
 
     #[test]

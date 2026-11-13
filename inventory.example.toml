@@ -18,6 +18,9 @@
 # [laptops_]
 # "192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["user", "admin"] }
 # Fallback IPs belong to the same machine; don't add them as separate entries.
+# "192.0.2.30" = { fallback_ips = ["192.0.2.31"], users = "user", disabled = true }
+# "192.0.2.32" = { users = "user", disabled = true } # No fallback IPs needed.
+# disabled = true keeps the machine listed but excludes it from every run.
 
 # Exclude these machines from "all" by default; optional groups appear after
 # other groups but before "individual hosts" and can be selected explicitly.

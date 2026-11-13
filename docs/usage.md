@@ -15,9 +15,11 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
 [pcs]
 "192.0.2.10" = "user"
 "192.0.2.20" = { fallback_ips = ["192.0.2.21", "2001:db8::20"], users = ["admin", "user"] }
+"192.0.2.30" = { fallback_ips = ["192.0.2.31"], users = "user", disabled = true }
 
 [servers]
 "203.0.113.10" = ["admin", "deploy"]
+"203.0.113.11" = { users = "admin", disabled = true }
 
 [_network]
 "192.0.2.1" = "admin"
@@ -39,6 +41,19 @@ the only CLI argument. See [inventory.example.toml](../inventory.example.toml).
   previously used NIC stays down. Do not
   list a fallback as another machine's primary IP or fallback IP. Existing
   single-IP entries need no changes. Keep the inline table on one line in TOML.
+- To retain a machine without contacting it, use `disabled = true` in its
+  inline table. It applies to the **whole machine**: every account, the primary
+  IP, and all fallback IPs are omitted from **all**, explicit group and
+  individual selection, checks, updates, reboots, shutdowns, and commands.
+  Unlike a group starting with `-`, you cannot opt in during a run. If the
+  same primary IP appears in several groups, `disabled = true` in **any** of
+  them disables it everywhere. A group containing only disabled machines does
+  not appear in selection. An inventory with no enabled machines stops before
+  selection or SSH with an error. For one IP and no fallbacks, use
+  `{ users = "admin", disabled = true }`; for multiple accounts, `users` can
+  be an array. `disabled = false` or omission means enabled. Use TOML booleans
+  (`true`/`false`), not strings such as `"yes"`. Disabled entries are still
+  parsed and validated, including their IPs and usernames.
 - Choose all, a group, or individual accounts. The same IP/username in several
   groups is visited once. Before entering the shared password, choose one or
   all accounts for each IP with multiple usernames when checking or running

@@ -66,6 +66,32 @@ fn multiple_ips_are_one_machine_with_one_chosen_update_account() {
 }
 
 #[test]
+fn disabled_machine_is_absent_from_all_groups_and_individual_selection() {
+    let inventory = "[paused]\n\"192.0.2.1\" = { fallback_ips = [\"192.0.2.2\"], users = [\"admin\", \"user\"], disabled = true }\n[servers]\n\"192.0.2.1\" = \"other\"\n\"192.0.2.3\" = \"admin\"";
+    for choices in ["1\n1\nn\n", "2\n1\nn\n", "3\n1\n1\nn\n"] {
+        let output = run_with_inventory(inventory, choices);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("Selected: admin@192.0.2.3"), "{text}");
+        assert!(!text.contains("192.0.2.1"), "{text}");
+        assert!(!text.contains("192.0.2.2"), "{text}");
+        assert!(!text.contains("group: paused"), "{text}");
+        assert!(!text.contains("Trust the first SSH host key"), "{text}");
+    }
+}
+
+#[test]
+fn all_disabled_inventory_stops_before_selection_or_ssh() {
+    let output = run_with_inventory(
+        "[pcs]\n\"192.0.2.1\" = { users = \"admin\", disabled = true }",
+        "",
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("inventory has no enabled hosts"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Select hosts"));
+}
+
+#[test]
 fn declining_reboot_confirmation_stops_before_any_ssh() {
     let output = run_with_inventory("[servers]\n\"192.0.2.1\" = \"admin\"\n", "1\n3\ny\nn\n");
     assert!(output.status.success());
